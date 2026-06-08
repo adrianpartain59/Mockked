@@ -121,6 +121,48 @@ html, body {
 .btn.primary:hover { background: var(--accent-2); }
 .btn.upload { background: var(--panel-2); }
 
+.field {
+  width: 100%;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.authnote { font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 14px; }
+.authnote.error { color: #ff6b6b; }
+
+.mockup-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.mockup-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.mockup-item .name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.mockup-item .name:hover { color: var(--accent); }
+.mockup-item .del {
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+}
+.mockup-item .del:hover { color: #ff6b6b; }
+
 .swatches { display: flex; gap: 8px; flex-wrap: wrap; }
 .swatch {
   width: 28px;

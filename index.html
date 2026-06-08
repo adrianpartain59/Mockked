@@ -9,7 +9,8 @@
       {
         "imports": {
           "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+          "@supabase/supabase-js": "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm"
         }
       }
     </script>
@@ -27,6 +28,25 @@
       </section>
 
       <aside class="panel">
+        <div class="group" id="accountGroup">
+          <div class="group-title">Account</div>
+          <div id="signedOut">
+            <input id="authEmail" class="field" type="email" placeholder="email" autocomplete="username" />
+            <input id="authPassword" class="field" type="password" placeholder="password" autocomplete="current-password" />
+            <div class="modes">
+              <button id="signIn" class="btn">Sign in</button>
+              <button id="signUp" class="btn">Sign up</button>
+            </div>
+            <div class="authnote" id="authNote"></div>
+          </div>
+          <div id="signedIn" hidden>
+            <div class="authnote">Signed in as <strong id="userEmail"></strong></div>
+            <button id="signOut" class="btn">Sign out</button>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
         <div class="group">
           <div class="group-title">Screen</div>
           <label class="btn upload" for="screenInput">⤒ Upload screen image</label>
@@ -116,6 +136,14 @@
             </select>
           </label>
           <button id="savePng" class="btn primary">⤓ Save PNG</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="group" id="cloudGroup">
+          <div class="group-title">My mockups</div>
+          <button id="saveCloud" class="btn">☁ Save mockup to cloud</button>
+          <div class="mockup-list" id="mockupList"></div>
         </div>
 
         <div class="status" id="status">Loading…</div>

@@ -3,6 +3,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { EXRLoader } from "three/addons/loaders/EXRLoader.js";
+import { supabase } from "./supabase.js";
 
 const MODEL_URL = "iphone-17-pro/source/iPhone%2017%20Pro.glb";
 const ENV_URL = "studio_small_08_4k.exr";
@@ -145,10 +146,13 @@ new GLTFLoader().load(
 
 // --- Screen image upload ---
 const screenInput = document.getElementById("screenInput");
-screenInput.addEventListener("change", (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const url = URL.createObjectURL(file);
+let lastScreenBlob = null; // the current screen image, kept so we can save it to the cloud
+
+// Apply any image (File/Blob) to the phone screen. Reused by the file picker
+// and by mockups loaded from the cloud.
+function setScreenFromBlob(blob) {
+  lastScreenBlob = blob;
+  const url = URL.createObjectURL(blob);
   new THREE.TextureLoader().load(url, (tex) => {
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.flipY = false; // match glTF UV convention
@@ -162,6 +166,11 @@ screenInput.addEventListener("change", (e) => {
     setStatus("Screen image applied.");
     render();
   });
+}
+
+screenInput.addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (file) setScreenFromBlob(file);
 });
 
 function applyScreenTexture() {
@@ -402,3 +411,197 @@ function onResize() {
 }
 window.addEventListener("resize", onResize);
 onResize();
+
+// =====================================================================
+// Account (Supabase auth) + cloud-saved mockups
+// =====================================================================
+
+// Snapshot every adjustable setting (everything except the screen image,
+// which is stored separately as a file).
+function getState() {
+  return {
+    color: bodyColorInput.value,
+    finish: parseFloat(finishInput.value),
+    fit: document.getElementById("fitMode").value,
+    brightness: parseFloat(document.getElementById("brightness").value),
+    pos: phone.position.toArray(),
+    rot: [phone.rotation.x, phone.rotation.y, phone.rotation.z],
+    scale: phone.scale.x,
+    bg: bgColor.value,
+  };
+}
+
+function applyState(s) {
+  if (!s) return;
+  if (s.color) setBodyColor(s.color);
+  if (s.finish != null) {
+    finishInput.value = s.finish;
+    applyFinish();
+  }
+  if (s.fit) document.getElementById("fitMode").value = s.fit;
+  if (s.brightness != null) {
+    document.getElementById("brightness").value = s.brightness;
+    applyBrightness();
+  }
+  if (Array.isArray(s.pos)) phone.position.fromArray(s.pos);
+  if (Array.isArray(s.rot)) {
+    phone.rotation.set(s.rot[0], s.rot[1], s.rot[2]);
+    rotX.value = Math.round(THREE.MathUtils.radToDeg(s.rot[0]));
+    rotY.value = Math.round(THREE.MathUtils.radToDeg(s.rot[1]));
+  }
+  if (s.scale != null) phone.scale.setScalar(s.scale);
+  if (s.bg) {
+    bgColor.value = s.bg;
+    applyBackground();
+  }
+  render();
+}
+
+// --- Auth UI ---
+const signedOut = document.getElementById("signedOut");
+const signedIn = document.getElementById("signedIn");
+const authEmail = document.getElementById("authEmail");
+const authPassword = document.getElementById("authPassword");
+const authNote = document.getElementById("authNote");
+const cloudGroup = document.getElementById("cloudGroup");
+const mockupList = document.getElementById("mockupList");
+
+function setAuthNote(msg, isError = false) {
+  authNote.textContent = msg || "";
+  authNote.classList.toggle("error", isError);
+}
+
+function updateAuthUI(session) {
+  const user = session?.user;
+  signedOut.hidden = !!user;
+  signedIn.hidden = !user;
+  cloudGroup.hidden = !user;
+  if (user) {
+    document.getElementById("userEmail").textContent = user.email;
+    refreshMockups();
+  } else {
+    mockupList.innerHTML = "";
+  }
+}
+
+document.getElementById("signIn").addEventListener("click", async () => {
+  setAuthNote("Signing in…");
+  const { error } = await supabase.auth.signInWithPassword({
+    email: authEmail.value.trim(),
+    password: authPassword.value,
+  });
+  setAuthNote(error ? error.message : "", !!error);
+});
+
+document.getElementById("signUp").addEventListener("click", async () => {
+  setAuthNote("Creating account…");
+  const { data, error } = await supabase.auth.signUp({
+    email: authEmail.value.trim(),
+    password: authPassword.value,
+  });
+  if (error) return setAuthNote(error.message, true);
+  setAuthNote(
+    data.session
+      ? "Account created — you're signed in."
+      : "Account created. Check your email to confirm, then sign in."
+  );
+});
+
+document.getElementById("signOut").addEventListener("click", () => supabase.auth.signOut());
+
+supabase.auth.onAuthStateChange((_event, session) => updateAuthUI(session));
+supabase.auth.getSession().then(({ data }) => updateAuthUI(data.session));
+
+// --- Saving / loading mockups ---
+document.getElementById("saveCloud").addEventListener("click", async () => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return setStatus("Sign in to save mockups.");
+  const name = prompt("Name this mockup:", "My mockup");
+  if (name === null) return;
+  setStatus("Saving mockup…");
+
+  let image_path = null;
+  if (lastScreenBlob) {
+    image_path = `${user.id}/${crypto.randomUUID()}.png`;
+    const { error: upErr } = await supabase.storage
+      .from("mockups")
+      .upload(image_path, lastScreenBlob, {
+        contentType: lastScreenBlob.type || "image/png",
+        upsert: true,
+      });
+    if (upErr) return setStatus("Image upload failed: " + upErr.message);
+  }
+
+  const { error } = await supabase.from("mockups").insert({
+    user_id: user.id,
+    name: name || "Untitled",
+    settings: getState(),
+    image_path,
+  });
+  if (error) return setStatus("Save failed: " + error.message);
+  setStatus(`Saved “${name || "Untitled"}”.`);
+  refreshMockups();
+});
+
+async function refreshMockups() {
+  const { data, error } = await supabase
+    .from("mockups")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) {
+    setStatus("Could not load mockups: " + error.message);
+    return;
+  }
+  renderMockupList(data || []);
+}
+
+function renderMockupList(rows) {
+  mockupList.innerHTML = "";
+  if (!rows.length) {
+    const empty = document.createElement("div");
+    empty.className = "authnote";
+    empty.textContent = "No saved mockups yet.";
+    mockupList.appendChild(empty);
+    return;
+  }
+  for (const row of rows) {
+    const item = document.createElement("div");
+    item.className = "mockup-item";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = row.name;
+    name.title = "Load this mockup";
+    name.addEventListener("click", () => loadMockup(row));
+    const del = document.createElement("button");
+    del.className = "del";
+    del.textContent = "🗑";
+    del.title = "Delete";
+    del.addEventListener("click", () => deleteMockup(row));
+    item.append(name, del);
+    mockupList.appendChild(item);
+  }
+}
+
+async function loadMockup(row) {
+  setStatus(`Loading “${row.name}”…`);
+  applyState(row.settings);
+  if (row.image_path) {
+    const { data, error } = await supabase.storage
+      .from("mockups")
+      .createSignedUrl(row.image_path, 3600);
+    if (!error && data?.signedUrl) {
+      const blob = await (await fetch(data.signedUrl)).blob();
+      setScreenFromBlob(blob);
+    }
+  }
+  setStatus(`Loaded “${row.name}”.`);
+}
+
+async function deleteMockup(row) {
+  if (!confirm(`Delete “${row.name}”?`)) return;
+  if (row.image_path) await supabase.storage.from("mockups").remove([row.image_path]);
+  const { error } = await supabase.from("mockups").delete().eq("id", row.id);
+  if (error) return setStatus("Delete failed: " + error.message);
+  setStatus(`Deleted “${row.name}”.`);
+  refreshMockups();
+}

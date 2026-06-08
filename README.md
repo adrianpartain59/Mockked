@@ -30,9 +30,30 @@ A local server is required (the browser can't load the `.glb`/`.exr` over `file:
   compositing), and adjust environment-light intensity.
 - **Save** — export a PNG at 1× / 2× / 3× resolution. The gizmo is hidden
   automatically in the exported image.
+- **Accounts & cloud sync** — sign up / sign in (email + password), then save
+  mockups to the cloud and reload them later. Each saved mockup stores its
+  settings (colour, transform, fit, brightness) plus the screen image.
+
+## Cloud setup (Supabase)
+
+Accounts and saved mockups are backed by [Supabase](https://supabase.com) (free
+tier). The project URL and **anon** key live in `supabase.js` — these are safe to
+commit; access is enforced server-side by Row Level Security.
+
+One-time setup in your Supabase project:
+
+1. **Create the schema.** Open *SQL Editor → New query*, paste the contents of
+   [`supabase/schema.sql`](supabase/schema.sql), and run it. This creates the
+   `mockups` table, its RLS policies, and a private `mockups` storage bucket.
+2. **Simplest auth flow.** Go to *Authentication → Sign In / Providers → Email*
+   and turn **off** "Confirm email" so sign-up logs you straight in. (Leave it on
+   if you'd rather verify addresses — then set *Authentication → URL
+   Configuration → Site URL* to your deployed URL so the confirmation link works.)
 
 ## Files
 
 - `index.html` — markup & control panel
 - `styles.css` — UI styling
-- `app.js` — Three.js scene, model/material handling, export
+- `app.js` — Three.js scene, model/material handling, export, auth & cloud sync
+- `supabase.js` — Supabase client (public URL + anon key)
+- `supabase/schema.sql` — database table, RLS policies, and storage bucket
