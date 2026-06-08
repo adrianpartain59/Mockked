@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>iPhone Mockup Generator</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">iPhone Mockup Generator</div>
+      <div class="hint-inline">Drag to orbit · scroll to zoom · pick a gizmo mode to move/rotate the phone</div>
+    </header>
+
+    <main class="layout">
+      <section class="stage-wrap">
+        <canvas id="stage"></canvas>
+        <div class="loading" id="loading">Loading model…</div>
+      </section>
+
+      <aside class="panel">
+        <div class="group">
+          <div class="group-title">Screen</div>
+          <label class="btn upload" for="screenInput">⤒ Upload screen image</label>
+          <input id="screenInput" type="file" accept="image/*" hidden />
+          <button id="clearScreen" class="btn">Reset screen</button>
+          <label class="row">
+            <span>Fit</span>
+            <select id="fitMode">
+              <option value="cover">Cover</option>
+              <option value="contain">Contain</option>
+              <option value="stretch">Stretch</option>
+            </select>
+          </label>
+          <label class="row">
+            <span>Brightness</span>
+            <input id="brightness" type="range" min="0" max="3" step="0.05" value="1" />
+          </label>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="group">
+          <div class="group-title">Transform</div>
+          <div class="modes">
+            <button class="btn mode active" data-mode="translate" id="modeTranslate">Move (W)</button>
+            <button class="btn mode" data-mode="rotate" id="modeRotate">Rotate (E)</button>
+            <button class="btn mode" data-mode="scale" id="modeScale">Scale (R)</button>
+          </div>
+          <label class="check">
+            <input id="gizmoToggle" type="checkbox" checked />
+            <span>Show gizmo</span>
+          </label>
+          <label class="row">
+            <span>Rotate Y</span>
+            <input id="rotY" type="range" min="-180" max="180" step="1" value="0" />
+          </label>
+          <label class="row">
+            <span>Rotate X</span>
+            <input id="rotX" type="range" min="-180" max="180" step="1" value="0" />
+          </label>
+          <button id="resetXform" class="btn">↻ Reset transform</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="group">
+          <div class="group-title">Phone color</div>
+          <div class="swatches" id="swatches"></div>
+          <label class="row">
+            <span>Custom</span>
+            <input id="bodyColor" type="color" value="#c9ccce" />
+          </label>
+          <label class="row">
+            <span>Finish</span>
+            <input id="finish" type="range" min="0.1" max="0.8" step="0.02" value="0.42" />
+          </label>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="group">
+          <div class="group-title">Scene</div>
+          <label class="row">
+            <span>Background</span>
+            <input id="bgColor" type="color" value="#15161a" />
+          </label>
+          <label class="check">
+            <input id="transparentBg" type="checkbox" />
+            <span>Transparent background</span>
+          </label>
+          <label class="row">
+            <span>Env light</span>
+            <input id="envIntensity" type="range" min="0" max="3" step="0.05" value="1" />
+          </label>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="group">
+          <div class="group-title">Save</div>
+          <label class="row">
+            <span>Scale</span>
+            <select id="exportScale">
+              <option value="1">1×</option>
+              <option value="2" selected>2×</option>
+              <option value="3">3×</option>
+            </select>
+          </label>
+          <button id="savePng" class="btn primary">⤓ Save PNG</button>
+        </div>
+
+        <div class="status" id="status">Loading…</div>
+      </aside>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

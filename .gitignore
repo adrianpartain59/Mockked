@@ -1,0 +1,9 @@
+# macOS
+.DS_Store
+
+# Editor/OS
+*.swp
+*~
+
+# Logs
+*.log
