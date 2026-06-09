@@ -35,6 +35,12 @@ A local server is required (the browser can't load the `.glb`/`.exr` over `file:
   Finish from matte to glossy. The aluminium is de-sparkled to a satin look.
 - **Scene** — background colour, transparent background (on by default, for
   compositing), and environment-light intensity.
+- **Presets** — apply a saved arrangement (every device's transform + the camera
+  view; the screen image is not part of a preset). Shipped defaults live in
+  `presets.js`. **Save preset** captures the current scene, keeps it as a local
+  draft, and copies a ready-to-paste object to your clipboard (also logged to the
+  console) — paste it into `DEFAULT_PRESETS` in `presets.js` to ship it to
+  everyone. (Per-account presets will come later; for now defaults are hardcoded.)
 - **Save** — the always-visible **Save** button (top-right of the panel) renders
   the scene and opens a **crop modal**: drag/resize the crop box, then download
   the cropped region as a PNG (transparent where the background is).

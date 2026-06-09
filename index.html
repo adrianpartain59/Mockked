@@ -54,6 +54,20 @@
 
         <div class="panel-scroll">
           <div class="group">
+            <div class="group-title">Presets</div>
+            <select id="presetSelect" class="preset-select"></select>
+            <div class="modes">
+              <button id="savePreset" class="btn">＋ Save preset</button>
+              <button id="deletePreset" class="btn">🗑 Delete</button>
+            </div>
+            <div class="authnote" id="presetNote">
+              Saves every device's transform + the camera view (not the screen image).
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="group">
             <div class="group-title">Screen</div>
             <label class="btn upload" for="screenInput">⤒ Upload screen image</label>
             <input id="screenInput" type="file" accept="image/*" hidden />

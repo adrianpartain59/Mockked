@@ -4,6 +4,7 @@ import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { EXRLoader } from "three/addons/loaders/EXRLoader.js";
 import { supabase } from "./supabase.js";
+import { DEFAULT_PRESETS } from "./presets.js";
 
 const MODEL_URL = "iphone-17-pro/source/iPhone%2017%20Pro.glb";
 const ENV_URL = "studio_small_08_4k.exr";
@@ -780,6 +781,145 @@ function onResize() {
 }
 window.addEventListener("resize", onResize);
 onResize();
+
+// =====================================================================
+// Presets — capture every device's transform + the camera view.
+// Default presets ship hardcoded in presets.js; drafts you create here are
+// kept in localStorage and copied to the clipboard as code to paste in.
+// =====================================================================
+const presetSelect = $("presetSelect");
+const DRAFT_KEY = "mockup_draft_presets";
+let draftPresets = loadDrafts();
+
+function loadDrafts() {
+  try {
+    return JSON.parse(localStorage.getItem(DRAFT_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+function saveDrafts() {
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draftPresets));
+  } catch {}
+}
+
+// Combined list: shipped defaults first, then local drafts.
+function allPresets() {
+  return [
+    ...DEFAULT_PRESETS.map((p) => ({ preset: p, draft: false })),
+    ...draftPresets.map((p) => ({ preset: p, draft: true })),
+  ];
+}
+
+function renderPresetSelect() {
+  presetSelect.innerHTML = "";
+  const ph = document.createElement("option");
+  ph.value = "";
+  ph.textContent = "Apply a preset…";
+  presetSelect.appendChild(ph);
+  allPresets().forEach((entry, idx) => {
+    const o = document.createElement("option");
+    o.value = String(idx);
+    o.textContent = entry.draft ? `${entry.preset.name} (draft)` : entry.preset.name;
+    presetSelect.appendChild(o);
+  });
+}
+
+function capturePreset(name) {
+  const r4 = (n) => Math.round(n * 10000) / 10000;
+  return {
+    name,
+    camera: {
+      position: camera.position.toArray().map(r4),
+      target: controls.target.toArray().map(r4),
+    },
+    devices: devices.map((d) => ({
+      pos: d.group.position.toArray().map(r4),
+      rot: [d.group.rotation.x, d.group.rotation.y, d.group.rotation.z].map(r4),
+      scale: d.group.scale.toArray().map(r4),
+    })),
+  };
+}
+
+function applyPreset(p) {
+  if (!p || !p.devices?.length) return;
+  // Carry the current screen images over by index so a test image survives.
+  const blobs = devices.map((d) => d.screenBlob);
+  for (const d of [...devices]) scene.remove(d.group);
+  devices.length = 0;
+  p.devices.forEach((pd, i) => {
+    const dev = buildDevice();
+    if (pd.pos) dev.group.position.fromArray(pd.pos);
+    if (pd.rot) dev.group.rotation.set(pd.rot[0], pd.rot[1], pd.rot[2]);
+    if (pd.scale) dev.group.scale.fromArray(pd.scale);
+    if (blobs[i]) applyScreenBlobToDevice(dev, blobs[i]);
+  });
+  if (p.camera) {
+    camera.position.fromArray(p.camera.position);
+    controls.target.fromArray(p.camera.target);
+    controls.update();
+  }
+  selectDevice(devices[0]);
+  renderDeviceBar();
+  render();
+}
+
+// Format a preset as a ready-to-paste entry for presets.js DEFAULT_PRESETS.
+function presetToCode(p) {
+  const arr = (a) => "[" + a.join(", ") + "]";
+  const devs = p.devices
+    .map((d) => `    { pos: ${arr(d.pos)}, rot: ${arr(d.rot)}, scale: ${arr(d.scale)} }`)
+    .join(",\n");
+  return (
+    `  {\n` +
+    `    name: ${JSON.stringify(p.name)},\n` +
+    `    camera: { position: ${arr(p.camera.position)}, target: ${arr(p.camera.target)} },\n` +
+    `    devices: [\n${devs}\n    ],\n` +
+    `  },`
+  );
+}
+
+presetSelect.addEventListener("change", () => {
+  const v = presetSelect.value;
+  presetSelect.value = ""; // reset so the same preset can be re-applied
+  if (v === "") return;
+  const entry = allPresets()[parseInt(v, 10)];
+  if (entry) {
+    applyPreset(entry.preset);
+    setStatus(`Applied preset “${entry.preset.name}”.`);
+  }
+});
+
+$("savePreset").addEventListener("click", async () => {
+  const name = prompt("Preset name:", "My preset");
+  if (!name) return;
+  const preset = capturePreset(name);
+  draftPresets.push(preset);
+  saveDrafts();
+  renderPresetSelect();
+  const code = presetToCode(preset);
+  try {
+    await navigator.clipboard.writeText(code);
+  } catch {}
+  console.log("Preset — paste into presets.js DEFAULT_PRESETS:\n" + code);
+  setStatus(`Saved “${name}”. Code copied to clipboard — paste into presets.js to ship it.`);
+});
+
+$("deletePreset").addEventListener("click", () => {
+  const v = presetSelect.value;
+  if (v === "") return setStatus("Pick a draft preset to delete.");
+  const idx = parseInt(v, 10);
+  const entry = allPresets()[idx];
+  if (!entry?.draft) return setStatus("Only your own draft presets can be deleted.");
+  const draftIdx = idx - DEFAULT_PRESETS.length;
+  draftPresets.splice(draftIdx, 1);
+  saveDrafts();
+  renderPresetSelect();
+  setStatus("Draft preset deleted.");
+});
+
+renderPresetSelect();
 
 // =====================================================================
 // Account (Supabase auth) + cloud-saved mockups (multi-device)
