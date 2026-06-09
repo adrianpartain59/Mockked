@@ -248,7 +248,6 @@ function syncControlsToDevice() {
   const s = activeDevice.settings;
   $("bodyColor").value = s.color;
   updateActiveSwatch(s.color);
-  $("finish").value = s.finish;
   refreshTransformSliders();
 }
 
@@ -384,7 +383,6 @@ const COLOR_PRESETS = [
 ];
 const bodyColorInput = $("bodyColor");
 const swatchesEl = $("swatches");
-const finishInput = $("finish");
 
 function applyDeviceColor(dev, hex) {
   dev.settings.color = hex;
@@ -429,11 +427,6 @@ function setupSwatches() {
 }
 setupSwatches();
 bodyColorInput.addEventListener("input", () => setBodyColor(bodyColorInput.value));
-finishInput.addEventListener("input", () => {
-  if (!activeDevice) return;
-  applyDeviceFinish(activeDevice, parseFloat(finishInput.value));
-  render();
-});
 
 // =====================================================================
 // Transform: per-axis X/Y/Z for Move / Rotate / Scale
