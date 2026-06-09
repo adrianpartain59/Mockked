@@ -559,9 +559,11 @@ $("savePng").addEventListener("click", async () => {
   cropImg.src = URL.createObjectURL(blob);
   cropImg.onload = () => {
     saveModal.hidden = false;
-    // Wait for the modal layout to settle so the crop box matches the
-    // image's final displayed size (keeps box coords and export scale in sync).
-    requestAnimationFrame(() => requestAnimationFrame(resetCropBox));
+    // Wait for the image to decode and the modal layout to settle so the crop
+    // box matches the displayed size and the pixels are readable.
+    const fit = () => requestAnimationFrame(() => requestAnimationFrame(autoFitCropBox));
+    if (cropImg.decode) cropImg.decode().then(fit, fit);
+    else fit();
   };
   setStatus("Crop and download your mockup.");
 });
@@ -570,13 +572,82 @@ $("cropCancel").addEventListener("click", () => {
   saveModal.hidden = true;
   if (cropImg.src) URL.revokeObjectURL(cropImg.src);
 });
-$("cropReset").addEventListener("click", resetCropBox);
+$("cropReset").addEventListener("click", autoFitCropBox);
 
-function resetCropBox() {
-  cropBox.style.left = "0px";
-  cropBox.style.top = "0px";
-  cropBox.style.width = cropImg.clientWidth + "px";
-  cropBox.style.height = cropImg.clientHeight + "px";
+function setCropRect(left, top, width, height) {
+  cropBox.style.left = left + "px";
+  cropBox.style.top = top + "px";
+  cropBox.style.width = width + "px";
+  cropBox.style.height = height + "px";
+}
+
+function fullCropBox() {
+  setCropRect(0, 0, cropImg.clientWidth, cropImg.clientHeight);
+}
+
+// Default crop: snap to the rendered content (non-transparent pixels) with a
+// slight even gap on each side. The background is transparent, so we find the
+// alpha bounding box. Falls back to the full image if detection fails.
+function autoFitCropBox() {
+  try {
+    autoFitCropBoxImpl();
+  } catch {
+    fullCropBox();
+  }
+}
+
+function autoFitCropBoxImpl() {
+  const nW = cropImg.naturalWidth;
+  const nH = cropImg.naturalHeight;
+  const dW = cropImg.clientWidth;
+  const dH = cropImg.clientHeight;
+  if (!nW || !nH || !dW || !dH) return fullCropBox();
+
+  // Analyse at reduced resolution for speed.
+  const aw = Math.min(nW, 500);
+  const scale = aw / nW;
+  const ah = Math.max(1, Math.round(nH * scale));
+  const cv = document.createElement("canvas");
+  cv.width = aw;
+  cv.height = ah;
+  const cx = cv.getContext("2d", { willReadFrequently: true });
+  cx.drawImage(cropImg, 0, 0, aw, ah);
+  let data;
+  try {
+    data = cx.getImageData(0, 0, aw, ah).data;
+  } catch {
+    return fullCropBox();
+  }
+
+  let minX = aw, minY = ah, maxX = -1, maxY = -1;
+  const ALPHA = 20;
+  for (let y = 0; y < ah; y++) {
+    for (let x = 0; x < aw; x++) {
+      if (data[(y * aw + x) * 4 + 3] > ALPHA) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return fullCropBox(); // nothing found
+
+  // Content box in displayed pixels.
+  const sx = dW / aw;
+  const sy = dH / ah;
+  let bx = minX * sx;
+  let by = minY * sy;
+  let bw = (maxX - minX + 1) * sx;
+  let bh = (maxY - minY + 1) * sy;
+
+  // Even gap on each side (~5% of the content's larger side, min 8px).
+  const pad = Math.max(8, Math.round(0.05 * Math.max(bw, bh)));
+  let left = Math.max(0, bx - pad);
+  let top = Math.max(0, by - pad);
+  let right = Math.min(dW, bx + bw + pad);
+  let bottom = Math.min(dH, by + bh + pad);
+  setCropRect(left, top, right - left, bottom - top);
 }
 
 // Drag to move / resize the crop box (mouse + touch via pointer events).
