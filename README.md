@@ -18,18 +18,26 @@ A local server is required (the browser can't load the `.glb`/`.exr` over `file:
 
 ## Features
 
-- **Upload to screen** — drop any image onto the phone's display. Fit modes:
-  Cover / Contain / Stretch, plus a screen Brightness control.
-- **Transform & rotate** — drag the on-canvas gizmo (Move `W`, Rotate `E`,
-  Scale `R`), or use the Rotate X/Y sliders. Drag empty space to orbit the
-  camera, scroll to zoom. *Reset transform* restores the default pose.
+- **Multiple devices** — **＋ Add Device** drops another phone into the scene and
+  selects it. Switch or remove devices from the chip bar. Every control below
+  acts on the *selected* device, so each phone can have its own screen, colour,
+  and pose.
+- **Upload to screen** — drop any image onto the selected phone's display. Each
+  uploaded image is kept as a thumbnail in the **assets row**, so after *Reset
+  screen* you can re-apply it (or apply it to another device) with one click.
+  Fit modes: Cover / Contain / Stretch, plus a screen Brightness control.
+- **Transform** — drag the on-canvas gizmo (Move `W`, Rotate `E`, Scale `R`) or
+  use the **X / Y / Z** sliders, which control position, rotation, or scale of
+  the selected device depending on the active mode. Drag empty space to orbit,
+  scroll to zoom. *Reset transform* restores the default pose.
 - **Phone color** — pick a realistic iPhone 17 Pro finish (Silver, Deep Blue,
   Cosmic Orange, Black, Natural) or any custom colour, and adjust the body
   Finish from matte to glossy. The aluminium is de-sparkled to a satin look.
-- **Scene** — pick a background colour, toggle a transparent background (for
-  compositing), and adjust environment-light intensity.
-- **Save** — export a PNG at 1× / 2× / 3× resolution. The gizmo is hidden
-  automatically in the exported image.
+- **Scene** — background colour, transparent background (on by default, for
+  compositing), and environment-light intensity.
+- **Save** — the always-visible **Save** button (top-right of the panel) renders
+  the scene and opens a **crop modal**: drag/resize the crop box, then download
+  the cropped region as a PNG (transparent where the background is).
 - **Accounts & cloud sync** — sign up / sign in (email + password), then save
   mockups to the cloud and reload them later. Each saved mockup stores its
   settings (colour, transform, fit, brightness) plus the screen image.

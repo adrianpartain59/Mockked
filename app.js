@@ -8,17 +8,23 @@ import { supabase } from "./supabase.js";
 const MODEL_URL = "iphone-17-pro/source/iPhone%2017%20Pro.glb";
 const ENV_URL = "studio_small_08_4k.exr";
 
+const SCREEN_ASPECT = 1206 / 2622; // iPhone 17 Pro display aspect (w/h)
+const DEFAULT_COLOR = "#4a4a50"; // a lighter graphite-black
+const DEFAULT_FINISH = 0.42;
+const DEVICE_SPACING = 0.14; // x-offset between devices so they don't overlap
+
 const canvas = document.getElementById("stage");
 const statusEl = document.getElementById("status");
 const loadingEl = document.getElementById("loading");
 const setStatus = (m) => (statusEl.textContent = m);
+const $ = (id) => document.getElementById(id);
 
 // --- Renderer ---
 const renderer = new THREE.WebGLRenderer({
   canvas,
   antialias: true,
   alpha: true,
-  preserveDrawingBuffer: true, // needed so we can export the canvas at any time
+  preserveDrawingBuffer: true, // lets us read the canvas for export at any time
 });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -27,7 +33,7 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 // --- Scene & camera ---
 const scene = new THREE.Scene();
-scene.background = new THREE.Color("#15161a");
+scene.background = null; // transparent by default
 
 const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 100);
 camera.position.set(0, 0.05, 0.6);
@@ -36,26 +42,20 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.minDistance = 0.15;
-controls.maxDistance = 3;
-
-// A holder we transform with the gizmo; the model lives inside it.
-const phone = new THREE.Group();
-scene.add(phone);
+controls.maxDistance = 4;
 
 // --- Transform gizmo ---
 const transform = new TransformControls(camera, renderer.domElement);
 transform.setSize(0.8);
-transform.attach(phone);
 scene.add(transform);
 transform.addEventListener("dragging-changed", (e) => {
-  controls.enabled = !e.value; // don't orbit while dragging the gizmo
+  controls.enabled = !e.value;
 });
-
-let screenMaterial = null;
-let defaultScreenMaps = null; // remember original maps to allow "reset screen"
-let uploadedTexture = null;
-let uploadedImageSize = { w: 1, h: 1 };
-const bodyMaterials = {}; // frame (sides + back), antenna lines, back accent
+transform.addEventListener("objectChange", () => {
+  refreshTransformSliders();
+  render();
+});
+transform.addEventListener("change", render);
 
 // --- Lighting from EXR environment ---
 const pmrem = new THREE.PMREMGenerator(renderer);
@@ -71,68 +71,35 @@ new EXRLoader().load(
   undefined,
   () => setStatus("Could not load environment map (lighting reduced).")
 );
-
-// fallback / fill lights so it's never pitch black
 const key = new THREE.DirectionalLight(0xffffff, 2);
 key.position.set(1, 2, 2);
 scene.add(key);
 scene.add(new THREE.AmbientLight(0xffffff, 0.3));
 
-// --- Load the model ---
+// =====================================================================
+// Devices
+// =====================================================================
+let templateModel = null;     // loaded GLB scene, cloned per device
+let modelCenter = new THREE.Vector3();
+let modelScale = 1;
+const devices = [];
+let activeDevice = null;
+let deviceCounter = 0;
+let mode = "translate";
+
 new GLTFLoader().load(
   MODEL_URL,
   (gltf) => {
-    const model = gltf.scene;
-
-    // Center the model at the origin and normalize its size.
-    const box = new THREE.Box3().setFromObject(model);
-    const center = box.getCenter(new THREE.Vector3());
+    templateModel = gltf.scene;
+    const box = new THREE.Box3().setFromObject(templateModel);
+    box.getCenter(modelCenter);
     const size = box.getSize(new THREE.Vector3());
-    model.position.sub(center);
-    const maxDim = Math.max(size.x, size.y, size.z);
-    const scale = 0.16 / maxDim; // fit to a friendly camera framing
-    model.scale.setScalar(scale);
-    model.rotation.y = Math.PI; // turn the screen to face the camera by default
-    phone.add(model);
-
-    // Find the screen material ("OLED" emissive display) and tune the cover glass.
-    model.traverse((o) => {
-      if (!o.isMesh) return;
-      const mats = Array.isArray(o.material) ? o.material : [o.material];
-      for (const m of mats) {
-        if (!m) continue;
-        if (m.name === "OLED") {
-          screenMaterial = m;
-          defaultScreenMaps = { map: m.map, emissiveMap: m.emissiveMap, color: m.color.clone() };
-          // Show the screen at its true pixel values: skip the scene's ACES tone
-          // mapping (which would wash out and desaturate a flat UI screenshot).
-          m.toneMapped = false;
-        }
-        if (m.name === "Glass") {
-          // The cover glass ships as 78%-opaque black, which heavily dims the
-          // screen behind it. Make it nearly clear so the display reads true.
-          m.opacity = 0.08;
-          m.needsUpdate = true;
-        }
-        // Collect the body materials we recolor / de-sparkle.
-        if (m.name === "Anodized aluminum") bodyMaterials.frame = m;
-        if (m.name === "Plastic antena") bodyMaterials.antenna = m;
-        if (m.name === "Frosted glass") bodyMaterials.back = m;
-      }
-    });
-
-    // Tame the sparkle: the aluminum ships glossy (roughness ~0.24) with a strong
-    // normal map, which fizzes under the sharp studio reflections. A satin finish
-    // with a gentler normal map reads like a real anodized phone body.
-    for (const m of Object.values(bodyMaterials)) {
-      if (m && m.normalScale) m.normalScale.set(0.1, -0.1);
-    }
-    if (bodyMaterials.frame) bodyMaterials.frame.metalness = 0.6;
+    modelScale = 0.16 / Math.max(size.x, size.y, size.z);
 
     loadingEl.classList.add("hidden");
-    setStatus(screenMaterial ? "Ready. Upload an image for the screen." : "Ready (screen mesh not found).");
-    setupBodyColor();
-    applyBrightness();
+    addDevice(); // first device
+    setStatus("Ready. Upload an image for the screen, or ＋ Add Device.");
+    applyBackground();
     render();
   },
   (e) => {
@@ -144,54 +111,161 @@ new GLTFLoader().load(
   }
 );
 
-// --- Screen image upload ---
-const screenInput = document.getElementById("screenInput");
-let lastScreenBlob = null; // the current screen image, kept so we can save it to the cloud
+// Build one independent iPhone instance (cloned geometry, cloned materials).
+function buildDevice() {
+  const model = templateModel.clone(true);
+  const bodyMaterials = {};
+  let screenMaterial = null;
+  let defaultScreenMaps = null;
 
-// Apply any image (File/Blob) to the phone screen. Reused by the file picker
-// and by mockups loaded from the cloud.
-function setScreenFromBlob(blob) {
-  lastScreenBlob = blob;
-  const url = URL.createObjectURL(blob);
-  new THREE.TextureLoader().load(url, (tex) => {
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.flipY = false; // match glTF UV convention
-    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-    tex.center.set(0.5, 0.5);
-    uploadedImageSize = { w: tex.image.width, h: tex.image.height };
-    uploadedTexture = tex;
-    applyScreenTexture();
-    applyFit();
-    URL.revokeObjectURL(url);
-    setStatus("Screen image applied.");
-    render();
+  model.traverse((o) => {
+    if (!o.isMesh) return;
+    o.material = Array.isArray(o.material)
+      ? o.material.map((m) => m.clone())
+      : o.material.clone();
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) {
+      if (!m) continue;
+      if (m.name === "OLED") {
+        screenMaterial = m;
+        defaultScreenMaps = { map: m.map, emissiveMap: m.emissiveMap, color: m.color.clone() };
+        m.toneMapped = false; // show the screen image at true pixel values
+      }
+      if (m.name === "Glass") {
+        m.opacity = 0.08; // thin the near-black cover glass so the screen reads true
+        m.needsUpdate = true;
+      }
+      if (m.name === "Anodized aluminum") bodyMaterials.frame = m;
+      if (m.name === "Plastic antena") bodyMaterials.antenna = m;
+      if (m.name === "Frosted glass") bodyMaterials.back = m;
+    }
+  });
+  for (const m of Object.values(bodyMaterials)) {
+    if (m && m.normalScale) m.normalScale.set(0.1, -0.1); // tame the sparkle
+  }
+  if (bodyMaterials.frame) bodyMaterials.frame.metalness = 0.6;
+
+  // Center + scale + face the screen forward, inside a pivot so the outer group
+  // transform (driven by gizmo / sliders) starts at identity.
+  model.position.copy(modelCenter).negate();
+  const pivot = new THREE.Group();
+  pivot.scale.setScalar(modelScale);
+  pivot.rotation.y = Math.PI;
+  pivot.add(model);
+  const group = new THREE.Group();
+  group.add(pivot);
+  scene.add(group);
+
+  const dev = {
+    id: ++deviceCounter,
+    group,
+    model,
+    screenMaterial,
+    bodyMaterials,
+    defaultScreenMaps,
+    screenBlob: null,
+    uploadedTexture: null,
+    uploadedImageSize: { w: 1, h: 1 },
+    settings: { color: DEFAULT_COLOR, finish: DEFAULT_FINISH, fit: "cover", brightness: 1 },
+  };
+  devices.push(dev);
+  applyDeviceColor(dev, dev.settings.color);
+  applyDeviceFinish(dev, dev.settings.finish);
+  applyDeviceBrightness(dev, dev.settings.brightness);
+  return dev;
+}
+
+function addDevice() {
+  const dev = buildDevice();
+  dev.group.position.x = (devices.length - 1) * DEVICE_SPACING;
+  selectDevice(dev);
+  renderDeviceBar();
+  render();
+  setStatus(`Added device ${dev.id}.`);
+}
+
+function removeDevice(dev) {
+  if (devices.length <= 1) return; // always keep at least one
+  scene.remove(dev.group);
+  const i = devices.indexOf(dev);
+  devices.splice(i, 1);
+  if (activeDevice === dev) selectDevice(devices[Math.max(0, i - 1)]);
+  renderDeviceBar();
+  render();
+}
+
+function selectDevice(dev) {
+  activeDevice = dev;
+  transform.attach(dev.group);
+  transform.enabled = $("gizmoToggle").checked;
+  transform.visible = $("gizmoToggle").checked;
+  syncControlsToDevice();
+  renderDeviceBar();
+  render();
+}
+
+function renderDeviceBar() {
+  const bar = $("deviceBar");
+  bar.innerHTML = "";
+  devices.forEach((dev, i) => {
+    const chip = document.createElement("div");
+    chip.className = "device-chip" + (dev === activeDevice ? " active" : "");
+    const label = document.createElement("span");
+    label.textContent = `Device ${i + 1}`;
+    label.addEventListener("click", () => selectDevice(dev));
+    chip.appendChild(label);
+    if (devices.length > 1) {
+      const x = document.createElement("button");
+      x.className = "x";
+      x.textContent = "×";
+      x.title = "Remove device";
+      x.addEventListener("click", (e) => {
+        e.stopPropagation();
+        removeDevice(dev);
+      });
+      chip.appendChild(x);
+    }
+    chip.addEventListener("click", () => selectDevice(dev));
+    bar.appendChild(chip);
   });
 }
 
-screenInput.addEventListener("change", (e) => {
-  const file = e.target.files[0];
-  if (file) setScreenFromBlob(file);
-});
+$("addDevice").addEventListener("click", addDevice);
 
-function applyScreenTexture() {
-  if (!screenMaterial || !uploadedTexture) return;
-  // Drive the display purely from the emissive channel so the image glows like
-  // a real screen and stays vivid regardless of environment lighting.
-  screenMaterial.map = null;
-  screenMaterial.color = new THREE.Color(0x000000);
-  screenMaterial.emissiveMap = uploadedTexture;
-  screenMaterial.emissive = new THREE.Color(0xffffff);
-  screenMaterial.toneMapped = false;
-  screenMaterial.needsUpdate = true;
+// Push the active device's settings/transform back into the controls.
+function syncControlsToDevice() {
+  if (!activeDevice) return;
+  const s = activeDevice.settings;
+  $("bodyColor").value = s.color;
+  updateActiveSwatch(s.color);
+  $("finish").value = s.finish;
+  $("fitMode").value = s.fit;
+  $("brightness").value = s.brightness;
+  refreshTransformSliders();
 }
 
-// Aspect of the phone screen UV region (iPhone 17 Pro ≈ 1206×2622).
-const SCREEN_ASPECT = 1206 / 2622;
-function applyFit() {
-  if (!uploadedTexture) return;
-  const mode = document.getElementById("fitMode").value;
-  const t = uploadedTexture;
-  const imgAspect = uploadedImageSize.w / uploadedImageSize.h;
+// =====================================================================
+// Screen image + assets library
+// =====================================================================
+const screenInput = $("screenInput");
+const assets = []; // shared library: { blob, url }
+
+function applyDeviceScreenTexture(dev) {
+  const m = dev.screenMaterial;
+  if (!m || !dev.uploadedTexture) return;
+  m.map = null;
+  m.color = new THREE.Color(0x000000);
+  m.emissiveMap = dev.uploadedTexture;
+  m.emissive = new THREE.Color(0xffffff);
+  m.toneMapped = false;
+  m.needsUpdate = true;
+}
+
+function applyDeviceFit(dev) {
+  const t = dev.uploadedTexture;
+  if (!t) return;
+  const mode = dev.settings.fit;
+  const imgAspect = dev.uploadedImageSize.w / dev.uploadedImageSize.h;
   t.repeat.set(1, 1);
   t.offset.set(0, 0);
   const wider = imgAspect > SCREEN_ASPECT;
@@ -216,37 +290,94 @@ function applyFit() {
       t.offset.set((1 - r) / 2, 0);
     }
   }
-  // The screen's UVs are mirrored along U, so flip horizontally (about center)
-  // to keep uploaded images reading the right way round.
-  t.repeat.x *= -1;
+  t.repeat.x *= -1; // the screen's UVs are mirrored along U
   render();
 }
-document.getElementById("fitMode").addEventListener("change", applyFit);
 
-document.getElementById("clearScreen").addEventListener("click", () => {
-  if (!screenMaterial || !defaultScreenMaps) return;
-  screenMaterial.map = defaultScreenMaps.map;
-  screenMaterial.emissiveMap = defaultScreenMaps.emissiveMap;
-  screenMaterial.color = defaultScreenMaps.color;
-  screenMaterial.needsUpdate = true;
-  uploadedTexture = null;
+// Apply any image (File/Blob) to a device's screen.
+function applyScreenBlobToDevice(dev, blob) {
+  dev.screenBlob = blob;
+  const url = URL.createObjectURL(blob);
+  new THREE.TextureLoader().load(url, (tex) => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.flipY = false;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    tex.center.set(0.5, 0.5);
+    dev.uploadedImageSize = { w: tex.image.width, h: tex.image.height };
+    dev.uploadedTexture = tex;
+    applyDeviceScreenTexture(dev);
+    applyDeviceFit(dev);
+    URL.revokeObjectURL(url);
+    setStatus("Screen image applied.");
+    render();
+  });
+}
+
+function addAsset(blob) {
+  // de-dupe nothing fancy — just keep an entry with a thumbnail URL
+  const url = URL.createObjectURL(blob);
+  assets.push({ blob, url });
+  renderAssets();
+}
+
+function renderAssets() {
+  const row = $("assetRow");
+  row.innerHTML = "";
+  for (const a of assets) {
+    const img = document.createElement("img");
+    img.className = "asset-thumb";
+    img.src = a.url;
+    img.title = "Apply to selected device";
+    img.addEventListener("click", () => {
+      if (activeDevice) applyScreenBlobToDevice(activeDevice, a.blob);
+    });
+    row.appendChild(img);
+  }
+}
+
+screenInput.addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file || !activeDevice) return;
+  addAsset(file);
+  applyScreenBlobToDevice(activeDevice, file);
   screenInput.value = "";
-  setStatus("Screen reset.");
+});
+
+$("clearScreen").addEventListener("click", () => {
+  const dev = activeDevice;
+  if (!dev || !dev.defaultScreenMaps) return;
+  dev.screenMaterial.map = dev.defaultScreenMaps.map;
+  dev.screenMaterial.emissiveMap = dev.defaultScreenMaps.emissiveMap;
+  dev.screenMaterial.color = dev.defaultScreenMaps.color.clone();
+  dev.screenMaterial.needsUpdate = true;
+  dev.uploadedTexture = null;
+  dev.screenBlob = null;
+  setStatus("Screen reset. Re-add an image from the assets row.");
   render();
 });
 
-function applyBrightness() {
-  if (!screenMaterial) return;
-  screenMaterial.emissiveIntensity = parseFloat(document.getElementById("brightness").value);
-  screenMaterial.needsUpdate = true;
+$("fitMode").addEventListener("change", () => {
+  if (!activeDevice) return;
+  activeDevice.settings.fit = $("fitMode").value;
+  applyDeviceFit(activeDevice);
+});
+
+function applyDeviceBrightness(dev, value) {
+  dev.settings.brightness = value;
+  if (dev.screenMaterial) {
+    dev.screenMaterial.emissiveIntensity = value;
+    dev.screenMaterial.needsUpdate = true;
+  }
 }
-document.getElementById("brightness").addEventListener("input", () => {
-  applyBrightness();
+$("brightness").addEventListener("input", () => {
+  if (!activeDevice) return;
+  applyDeviceBrightness(activeDevice, parseFloat($("brightness").value));
   render();
 });
 
-// --- Phone body color ---
-// Real iPhone 17 Pro finishes (approximate anodized-aluminum tints).
+// =====================================================================
+// Phone color
+// =====================================================================
 const COLOR_PRESETS = [
   { name: "Silver", hex: "#c9ccce" },
   { name: "Deep Blue", hex: "#2e4257" },
@@ -254,32 +385,38 @@ const COLOR_PRESETS = [
   { name: "Black", hex: "#2b2b2e" },
   { name: "Natural", hex: "#9a948b" },
 ];
-const bodyColorInput = document.getElementById("bodyColor");
-const swatchesEl = document.getElementById("swatches");
-const finishInput = document.getElementById("finish");
+const bodyColorInput = $("bodyColor");
+const swatchesEl = $("swatches");
+const finishInput = $("finish");
 
-function setBodyColor(hex) {
-  bodyColorInput.value = hex;
+function applyDeviceColor(dev, hex) {
+  dev.settings.color = hex;
   const c = new THREE.Color(hex);
-  if (bodyMaterials.frame) bodyMaterials.frame.color.copy(c);
-  // Antenna lines and back read as a slightly lighter shade of the body color.
+  if (dev.bodyMaterials.frame) dev.bodyMaterials.frame.color.copy(c);
   const lighter = c.clone().lerp(new THREE.Color(0xffffff), 0.15);
-  if (bodyMaterials.antenna) bodyMaterials.antenna.color.copy(lighter);
-  if (bodyMaterials.back) bodyMaterials.back.color.copy(c);
-  // Mark the matching swatch active.
+  if (dev.bodyMaterials.antenna) dev.bodyMaterials.antenna.color.copy(lighter);
+  if (dev.bodyMaterials.back) dev.bodyMaterials.back.color.copy(c);
+}
+
+function applyDeviceFinish(dev, r) {
+  dev.settings.finish = r;
+  for (const m of Object.values(dev.bodyMaterials)) if (m) m.roughness = r;
+}
+
+function updateActiveSwatch(hex) {
   [...swatchesEl.children].forEach((s) =>
     s.classList.toggle("active", s.dataset.hex.toLowerCase() === hex.toLowerCase())
   );
+}
+
+function setBodyColor(hex) {
+  bodyColorInput.value = hex;
+  updateActiveSwatch(hex);
+  if (activeDevice) applyDeviceColor(activeDevice, hex);
   render();
 }
 
-function applyFinish() {
-  const r = parseFloat(finishInput.value);
-  for (const m of Object.values(bodyMaterials)) if (m) m.roughness = r;
-  render();
-}
-
-function setupBodyColor() {
+function setupSwatches() {
   swatchesEl.innerHTML = "";
   for (const p of COLOR_PRESETS) {
     const b = document.createElement("button");
@@ -290,60 +427,110 @@ function setupBodyColor() {
     b.addEventListener("click", () => setBodyColor(p.hex));
     swatchesEl.appendChild(b);
   }
-  applyFinish();
-  setBodyColor(COLOR_PRESETS[0].hex); // default to Silver
 }
+setupSwatches();
 bodyColorInput.addEventListener("input", () => setBodyColor(bodyColorInput.value));
-finishInput.addEventListener("input", applyFinish);
+finishInput.addEventListener("input", () => {
+  if (!activeDevice) return;
+  applyDeviceFinish(activeDevice, parseFloat(finishInput.value));
+  render();
+});
 
-// --- Transform gizmo modes ---
+// =====================================================================
+// Transform: per-axis X/Y/Z for Move / Rotate / Scale
+// =====================================================================
+const tX = $("tX");
+const tY = $("tY");
+const tZ = $("tZ");
+const RANGES = {
+  translate: { min: -0.4, max: 0.4, step: 0.005 },
+  rotate: { min: -180, max: 180, step: 1 },
+  scale: { min: 0.2, max: 3, step: 0.01 },
+};
+
+function refreshTransformSliders() {
+  if (!activeDevice) return;
+  const g = activeDevice.group;
+  const r = RANGES[mode];
+  for (const el of [tX, tY, tZ]) {
+    el.min = r.min;
+    el.max = r.max;
+    el.step = r.step;
+  }
+  if (mode === "translate") {
+    tX.value = g.position.x;
+    tY.value = g.position.y;
+    tZ.value = g.position.z;
+  } else if (mode === "rotate") {
+    tX.value = THREE.MathUtils.radToDeg(g.rotation.x);
+    tY.value = THREE.MathUtils.radToDeg(g.rotation.y);
+    tZ.value = THREE.MathUtils.radToDeg(g.rotation.z);
+  } else {
+    tX.value = g.scale.x;
+    tY.value = g.scale.y;
+    tZ.value = g.scale.z;
+  }
+}
+
+function onTransformSliderInput() {
+  if (!activeDevice) return;
+  const g = activeDevice.group;
+  const x = parseFloat(tX.value);
+  const y = parseFloat(tY.value);
+  const z = parseFloat(tZ.value);
+  if (mode === "translate") {
+    g.position.set(x, y, z);
+  } else if (mode === "rotate") {
+    g.rotation.set(
+      THREE.MathUtils.degToRad(x),
+      THREE.MathUtils.degToRad(y),
+      THREE.MathUtils.degToRad(z)
+    );
+  } else {
+    g.scale.set(x || 0.001, y || 0.001, z || 0.001);
+  }
+  render();
+}
+[tX, tY, tZ].forEach((el) => el.addEventListener("input", onTransformSliderInput));
+
 const modeButtons = [...document.querySelectorAll(".mode")];
-function setMode(mode) {
-  transform.setMode(mode);
-  modeButtons.forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
+function setMode(m) {
+  mode = m;
+  transform.setMode(m);
+  modeButtons.forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+  refreshTransformSliders();
   render();
 }
 modeButtons.forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
 
-document.getElementById("gizmoToggle").addEventListener("change", (e) => {
+$("gizmoToggle").addEventListener("change", (e) => {
   transform.enabled = e.target.checked;
   transform.visible = e.target.checked;
   render();
 });
 
-// Rotation sliders (drive the phone group directly).
-const rotY = document.getElementById("rotY");
-const rotX = document.getElementById("rotX");
-function applySliderRotation() {
-  phone.rotation.set(
-    THREE.MathUtils.degToRad(parseFloat(rotX.value)),
-    THREE.MathUtils.degToRad(parseFloat(rotY.value)),
-    phone.rotation.z
-  );
-  render();
-}
-rotY.addEventListener("input", applySliderRotation);
-rotX.addEventListener("input", applySliderRotation);
-
-document.getElementById("resetXform").addEventListener("click", () => {
-  phone.position.set(0, 0, 0);
-  phone.rotation.set(0, 0, 0);
-  phone.scale.setScalar(1);
-  rotY.value = 0;
-  rotX.value = 0;
-  setMode("translate");
+$("resetXform").addEventListener("click", () => {
+  if (!activeDevice) return;
+  const i = devices.indexOf(activeDevice);
+  activeDevice.group.position.set(i * DEVICE_SPACING, 0, 0);
+  activeDevice.group.rotation.set(0, 0, 0);
+  activeDevice.group.scale.setScalar(1);
+  refreshTransformSliders();
   render();
 });
 
 window.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
   if (e.key === "w") setMode("translate");
   if (e.key === "e") setMode("rotate");
   if (e.key === "r") setMode("scale");
 });
 
-// --- Scene controls ---
-const bgColor = document.getElementById("bgColor");
-const transparentBg = document.getElementById("transparentBg");
+// =====================================================================
+// Scene controls
+// =====================================================================
+const bgColor = $("bgColor");
+const transparentBg = $("transparentBg");
 function applyBackground() {
   scene.background = transparentBg.checked ? null : new THREE.Color(bgColor.value);
   render();
@@ -351,44 +538,155 @@ function applyBackground() {
 bgColor.addEventListener("input", applyBackground);
 transparentBg.addEventListener("change", applyBackground);
 
-document.getElementById("envIntensity").addEventListener("input", (e) => {
+$("envIntensity").addEventListener("input", (e) => {
   scene.environmentIntensity = parseFloat(e.target.value);
   render();
 });
 
-// --- Save PNG ---
-document.getElementById("savePng").addEventListener("click", () => {
-  const scaleFactor = parseInt(document.getElementById("exportScale").value, 10);
-  const prevRatio = renderer.getPixelRatio();
+// =====================================================================
+// Save → crop modal
+// =====================================================================
+const saveModal = $("saveModal");
+const cropImg = $("cropImg");
+const cropBox = $("cropBox");
+const cropStage = $("cropStage");
 
-  // Render at higher resolution for a crisp export, then restore.
-  renderer.setPixelRatio(scaleFactor);
+function renderToBlob(scaleFactor = 2) {
+  const prevRatio = renderer.getPixelRatio();
   const gizmoWasVisible = transform.visible;
   transform.visible = false;
+  renderer.setPixelRatio(scaleFactor);
+  renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
   renderer.render(scene, camera);
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      transform.visible = gizmoWasVisible;
+      renderer.setPixelRatio(prevRatio);
+      onResize();
+      resolve(blob);
+    }, "image/png");
+  });
+}
 
-  canvas.toBlob((blob) => {
+$("savePng").addEventListener("click", async () => {
+  setStatus("Rendering…");
+  const blob = await renderToBlob(2);
+  cropImg.src = URL.createObjectURL(blob);
+  cropImg.onload = () => {
+    saveModal.hidden = false;
+    // Wait for the modal layout to settle so the crop box matches the
+    // image's final displayed size (keeps box coords and export scale in sync).
+    requestAnimationFrame(() => requestAnimationFrame(resetCropBox));
+  };
+  setStatus("Crop and download your mockup.");
+});
+
+$("cropCancel").addEventListener("click", () => {
+  saveModal.hidden = true;
+  if (cropImg.src) URL.revokeObjectURL(cropImg.src);
+});
+$("cropReset").addEventListener("click", resetCropBox);
+
+function resetCropBox() {
+  cropBox.style.left = "0px";
+  cropBox.style.top = "0px";
+  cropBox.style.width = cropImg.clientWidth + "px";
+  cropBox.style.height = cropImg.clientHeight + "px";
+}
+
+// Drag to move / resize the crop box (mouse + touch via pointer events).
+let dragState = null;
+function px(v) {
+  return parseFloat(v) || 0;
+}
+function startDrag(e, handle) {
+  e.preventDefault();
+  dragState = {
+    handle,
+    startX: e.clientX,
+    startY: e.clientY,
+    left: px(cropBox.style.left),
+    top: px(cropBox.style.top),
+    width: cropBox.offsetWidth,
+    height: cropBox.offsetHeight,
+  };
+  window.addEventListener("pointermove", onDrag);
+  window.addEventListener("pointerup", endDrag);
+}
+function onDrag(e) {
+  if (!dragState) return;
+  const dx = e.clientX - dragState.startX;
+  const dy = e.clientY - dragState.startY;
+  const maxW = cropImg.clientWidth;
+  const maxH = cropImg.clientHeight;
+  let { left, top, width, height } = dragState;
+  const min = 20;
+  if (!dragState.handle) {
+    left = Math.min(Math.max(0, left + dx), maxW - width);
+    top = Math.min(Math.max(0, top + dy), maxH - height);
+  } else {
+    const h = dragState.handle;
+    if (h.includes("l")) {
+      const nl = Math.min(Math.max(0, left + dx), left + width - min);
+      width += left - nl;
+      left = nl;
+    }
+    if (h.includes("r")) {
+      width = Math.min(Math.max(min, width + dx), maxW - left);
+    }
+    if (h.includes("t")) {
+      const nt = Math.min(Math.max(0, top + dy), top + height - min);
+      height += top - nt;
+      top = nt;
+    }
+    if (h.includes("b")) {
+      height = Math.min(Math.max(min, height + dy), maxH - top);
+    }
+  }
+  cropBox.style.left = left + "px";
+  cropBox.style.top = top + "px";
+  cropBox.style.width = width + "px";
+  cropBox.style.height = height + "px";
+}
+function endDrag() {
+  dragState = null;
+  window.removeEventListener("pointermove", onDrag);
+  window.removeEventListener("pointerup", endDrag);
+}
+cropBox.addEventListener("pointerdown", (e) => {
+  if (e.target.classList.contains("handle")) startDrag(e, e.target.dataset.h);
+  else startDrag(e, null);
+});
+
+$("cropDownload").addEventListener("click", () => {
+  const ratio = cropImg.naturalWidth / cropImg.clientWidth;
+  const sx = px(cropBox.style.left) * ratio;
+  const sy = px(cropBox.style.top) * ratio;
+  const sw = cropBox.offsetWidth * ratio;
+  const sh = cropBox.offsetHeight * ratio;
+  const out = document.createElement("canvas");
+  out.width = Math.round(sw);
+  out.height = Math.round(sh);
+  out.getContext("2d").drawImage(cropImg, sx, sy, sw, sh, 0, 0, out.width, out.height);
+  out.toBlob((blob) => {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `iphone-mockup-${Date.now()}.png`;
     a.click();
     URL.revokeObjectURL(a.href);
-
-    transform.visible = gizmoWasVisible;
-    renderer.setPixelRatio(prevRatio);
-    onResize();
-    setStatus(`Saved PNG at ${scaleFactor}×.`);
+    saveModal.hidden = true;
+    setStatus("Saved PNG.");
   }, "image/png");
 });
 
-// --- Render loop (render-on-demand + damping) ---
+// =====================================================================
+// Render loop
+// =====================================================================
 let needsRender = true;
 function render() {
   needsRender = true;
 }
 controls.addEventListener("change", render);
-transform.addEventListener("change", render);
-transform.addEventListener("objectChange", render);
 
 function animate() {
   requestAnimationFrame(animate);
@@ -413,58 +711,59 @@ window.addEventListener("resize", onResize);
 onResize();
 
 // =====================================================================
-// Account (Supabase auth) + cloud-saved mockups
+// Account (Supabase auth) + cloud-saved mockups (multi-device)
 // =====================================================================
-
-// Snapshot every adjustable setting (everything except the screen image,
-// which is stored separately as a file).
-function getState() {
+function getSceneState() {
   return {
-    color: bodyColorInput.value,
-    finish: parseFloat(finishInput.value),
-    fit: document.getElementById("fitMode").value,
-    brightness: parseFloat(document.getElementById("brightness").value),
-    pos: phone.position.toArray(),
-    rot: [phone.rotation.x, phone.rotation.y, phone.rotation.z],
-    scale: phone.scale.x,
     bg: bgColor.value,
+    transparent: transparentBg.checked,
+    devices: devices.map((d) => ({
+      settings: { ...d.settings },
+      pos: d.group.position.toArray(),
+      rot: [d.group.rotation.x, d.group.rotation.y, d.group.rotation.z],
+      scale: d.group.scale.toArray(),
+    })),
   };
 }
 
-function applyState(s) {
-  if (!s) return;
-  if (s.color) setBodyColor(s.color);
-  if (s.finish != null) {
-    finishInput.value = s.finish;
-    applyFinish();
+async function applySceneState(state, imagePaths) {
+  if (!state) return;
+  // Clear existing devices.
+  for (const d of [...devices]) scene.remove(d.group);
+  devices.length = 0;
+  for (let i = 0; i < (state.devices?.length || 0); i++) {
+    const ds = state.devices[i];
+    const dev = buildDevice();
+    applyDeviceColor(dev, ds.settings.color);
+    applyDeviceFinish(dev, ds.settings.finish);
+    applyDeviceBrightness(dev, ds.settings.brightness);
+    dev.settings.fit = ds.settings.fit;
+    if (Array.isArray(ds.pos)) dev.group.position.fromArray(ds.pos);
+    if (Array.isArray(ds.rot)) dev.group.rotation.set(ds.rot[0], ds.rot[1], ds.rot[2]);
+    if (Array.isArray(ds.scale)) dev.group.scale.fromArray(ds.scale);
+    const path = imagePaths?.[i];
+    if (path) {
+      const { data } = await supabase.storage.from("mockups").createSignedUrl(path, 3600);
+      if (data?.signedUrl) {
+        const blob = await (await fetch(data.signedUrl)).blob();
+        applyScreenBlobToDevice(dev, blob);
+      }
+    }
   }
-  if (s.fit) document.getElementById("fitMode").value = s.fit;
-  if (s.brightness != null) {
-    document.getElementById("brightness").value = s.brightness;
-    applyBrightness();
-  }
-  if (Array.isArray(s.pos)) phone.position.fromArray(s.pos);
-  if (Array.isArray(s.rot)) {
-    phone.rotation.set(s.rot[0], s.rot[1], s.rot[2]);
-    rotX.value = Math.round(THREE.MathUtils.radToDeg(s.rot[0]));
-    rotY.value = Math.round(THREE.MathUtils.radToDeg(s.rot[1]));
-  }
-  if (s.scale != null) phone.scale.setScalar(s.scale);
-  if (s.bg) {
-    bgColor.value = s.bg;
-    applyBackground();
-  }
-  render();
+  if (state.bg) bgColor.value = state.bg;
+  transparentBg.checked = !!state.transparent;
+  applyBackground();
+  selectDevice(devices[0]);
+  renderDeviceBar();
 }
 
-// --- Auth UI ---
-const signedOut = document.getElementById("signedOut");
-const signedIn = document.getElementById("signedIn");
-const authEmail = document.getElementById("authEmail");
-const authPassword = document.getElementById("authPassword");
-const authNote = document.getElementById("authNote");
-const cloudGroup = document.getElementById("cloudGroup");
-const mockupList = document.getElementById("mockupList");
+const signedOut = $("signedOut");
+const signedIn = $("signedIn");
+const authEmail = $("authEmail");
+const authPassword = $("authPassword");
+const authNote = $("authNote");
+const cloudGroup = $("cloudGroup");
+const mockupList = $("mockupList");
 
 function setAuthNote(msg, isError = false) {
   authNote.textContent = msg || "";
@@ -477,14 +776,14 @@ function updateAuthUI(session) {
   signedIn.hidden = !user;
   cloudGroup.hidden = !user;
   if (user) {
-    document.getElementById("userEmail").textContent = user.email;
+    $("userEmail").textContent = user.email;
     refreshMockups();
   } else {
     mockupList.innerHTML = "";
   }
 }
 
-document.getElementById("signIn").addEventListener("click", async () => {
+$("signIn").addEventListener("click", async () => {
   setAuthNote("Signing in…");
   const { error } = await supabase.auth.signInWithPassword({
     email: authEmail.value.trim(),
@@ -492,8 +791,7 @@ document.getElementById("signIn").addEventListener("click", async () => {
   });
   setAuthNote(error ? error.message : "", !!error);
 });
-
-document.getElementById("signUp").addEventListener("click", async () => {
+$("signUp").addEventListener("click", async () => {
   setAuthNote("Creating account…");
   const { data, error } = await supabase.auth.signUp({
     email: authEmail.value.trim(),
@@ -506,37 +804,38 @@ document.getElementById("signUp").addEventListener("click", async () => {
       : "Account created. Check your email to confirm, then sign in."
   );
 });
-
-document.getElementById("signOut").addEventListener("click", () => supabase.auth.signOut());
-
-supabase.auth.onAuthStateChange((_event, session) => updateAuthUI(session));
+$("signOut").addEventListener("click", () => supabase.auth.signOut());
+supabase.auth.onAuthStateChange((_e, session) => updateAuthUI(session));
 supabase.auth.getSession().then(({ data }) => updateAuthUI(data.session));
 
-// --- Saving / loading mockups ---
-document.getElementById("saveCloud").addEventListener("click", async () => {
+$("saveCloud").addEventListener("click", async () => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return setStatus("Sign in to save mockups.");
   const name = prompt("Name this mockup:", "My mockup");
   if (name === null) return;
   setStatus("Saving mockup…");
 
-  let image_path = null;
-  if (lastScreenBlob) {
-    image_path = `${user.id}/${crypto.randomUUID()}.png`;
-    const { error: upErr } = await supabase.storage
-      .from("mockups")
-      .upload(image_path, lastScreenBlob, {
-        contentType: lastScreenBlob.type || "image/png",
-        upsert: true,
-      });
-    if (upErr) return setStatus("Image upload failed: " + upErr.message);
+  // Upload each device's screen image (if any), collecting paths in order.
+  const imagePaths = [];
+  for (const d of devices) {
+    if (d.screenBlob) {
+      const path = `${user.id}/${crypto.randomUUID()}.png`;
+      const { error: upErr } = await supabase.storage
+        .from("mockups")
+        .upload(path, d.screenBlob, { contentType: d.screenBlob.type || "image/png", upsert: true });
+      if (upErr) return setStatus("Image upload failed: " + upErr.message);
+      imagePaths.push(path);
+    } else {
+      imagePaths.push(null);
+    }
   }
 
+  const settings = { ...getSceneState(), imagePaths };
   const { error } = await supabase.from("mockups").insert({
     user_id: user.id,
     name: name || "Untitled",
-    settings: getState(),
-    image_path,
+    settings,
+    image_path: imagePaths.find(Boolean) || null,
   });
   if (error) return setStatus("Save failed: " + error.message);
   setStatus(`Saved “${name || "Untitled"}”.`);
@@ -548,10 +847,7 @@ async function refreshMockups() {
     .from("mockups")
     .select("*")
     .order("created_at", { ascending: false });
-  if (error) {
-    setStatus("Could not load mockups: " + error.message);
-    return;
-  }
+  if (error) return setStatus("Could not load mockups: " + error.message);
   renderMockupList(data || []);
 }
 
@@ -584,22 +880,15 @@ function renderMockupList(rows) {
 
 async function loadMockup(row) {
   setStatus(`Loading “${row.name}”…`);
-  applyState(row.settings);
-  if (row.image_path) {
-    const { data, error } = await supabase.storage
-      .from("mockups")
-      .createSignedUrl(row.image_path, 3600);
-    if (!error && data?.signedUrl) {
-      const blob = await (await fetch(data.signedUrl)).blob();
-      setScreenFromBlob(blob);
-    }
-  }
+  const s = row.settings || {};
+  await applySceneState(s, s.imagePaths);
   setStatus(`Loaded “${row.name}”.`);
 }
 
 async function deleteMockup(row) {
   if (!confirm(`Delete “${row.name}”?`)) return;
-  if (row.image_path) await supabase.storage.from("mockups").remove([row.image_path]);
+  const paths = (row.settings?.imagePaths || []).filter(Boolean);
+  if (paths.length) await supabase.storage.from("mockups").remove(paths);
   const { error } = await supabase.from("mockups").delete().eq("id", row.id);
   if (error) return setStatus("Delete failed: " + error.message);
   setStatus(`Deleted “${row.name}”.`);
