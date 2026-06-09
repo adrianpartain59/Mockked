@@ -36,11 +36,12 @@ A local server is required (the browser can't load the `.glb`/`.exr` over `file:
 - **Scene** — background colour, transparent background (on by default, for
   compositing), and environment-light intensity.
 - **Presets** — apply a saved arrangement (every device's transform + the camera
-  view; the screen image is not part of a preset). Shipped defaults live in
-  `presets.js`. **Save preset** captures the current scene, keeps it as a local
-  draft, and copies a ready-to-paste object to your clipboard (also logged to the
-  console) — paste it into `DEFAULT_PRESETS` in `presets.js` to ship it to
-  everyone. (Per-account presets will come later; for now defaults are hardcoded.)
+  view; the screen image is not part of a preset). **Save preset** writes a
+  *shared* preset to Supabase (`shared_presets` table), so everyone gets it
+  immediately — no code edit needed. A couple of base defaults are also hardcoded
+  in `presets.js` as a fallback. Run [`supabase/presets.sql`](supabase/presets.sql)
+  once to create the shared table. (Per-account presets can come later; for now
+  shared presets are open for anyone to add/remove — see the SQL to lock down.)
 - **Save** — the always-visible **Save** button (top-right of the panel) renders
   the scene and opens a **crop modal**: drag/resize the crop box, then download
   the cropped region as a PNG (transparent where the background is).

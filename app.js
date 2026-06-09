@@ -784,31 +784,18 @@ onResize();
 
 // =====================================================================
 // Presets — capture every device's transform + the camera view.
-// Default presets ship hardcoded in presets.js; drafts you create here are
-// kept in localStorage and copied to the clipboard as code to paste in.
+// Presets are shared: hardcoded base defaults live in presets.js and any saved
+// presets live in the Supabase `shared_presets` table, so "Save preset" makes a
+// preset everyone gets. (The screen image is never part of a preset.)
 // =====================================================================
 const presetSelect = $("presetSelect");
-const DRAFT_KEY = "mockup_draft_presets";
-let draftPresets = loadDrafts();
+let sharedPresets = []; // loaded from Supabase: { id, name, camera, devices }
 
-function loadDrafts() {
-  try {
-    return JSON.parse(localStorage.getItem(DRAFT_KEY)) || [];
-  } catch {
-    return [];
-  }
-}
-function saveDrafts() {
-  try {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(draftPresets));
-  } catch {}
-}
-
-// Combined list: shipped defaults first, then local drafts.
+// Combined list: hardcoded base defaults first, then shared (DB) presets.
 function allPresets() {
   return [
-    ...DEFAULT_PRESETS.map((p) => ({ preset: p, draft: false })),
-    ...draftPresets.map((p) => ({ preset: p, draft: true })),
+    ...DEFAULT_PRESETS.map((p) => ({ preset: p, id: null })),
+    ...sharedPresets.map((p) => ({ preset: p, id: p.id })),
   ];
 }
 
@@ -821,15 +808,24 @@ function renderPresetSelect() {
   allPresets().forEach((entry, idx) => {
     const o = document.createElement("option");
     o.value = String(idx);
-    o.textContent = entry.draft ? `${entry.preset.name} (draft)` : entry.preset.name;
+    o.textContent = entry.preset.name;
     presetSelect.appendChild(o);
   });
 }
 
-function capturePreset(name) {
+async function loadSharedPresets() {
+  const { data, error } = await supabase
+    .from("shared_presets")
+    .select("*")
+    .order("created_at");
+  if (error) return; // table may not exist yet — fall back to hardcoded defaults
+  sharedPresets = (data || []).map((r) => ({ id: r.id, name: r.name, ...r.data }));
+  renderPresetSelect();
+}
+
+function capturePreset() {
   const r4 = (n) => Math.round(n * 10000) / 10000;
   return {
-    name,
     camera: {
       position: camera.position.toArray().map(r4),
       target: controls.target.toArray().map(r4),
@@ -865,21 +861,6 @@ function applyPreset(p) {
   render();
 }
 
-// Format a preset as a ready-to-paste entry for presets.js DEFAULT_PRESETS.
-function presetToCode(p) {
-  const arr = (a) => "[" + a.join(", ") + "]";
-  const devs = p.devices
-    .map((d) => `    { pos: ${arr(d.pos)}, rot: ${arr(d.rot)}, scale: ${arr(d.scale)} }`)
-    .join(",\n");
-  return (
-    `  {\n` +
-    `    name: ${JSON.stringify(p.name)},\n` +
-    `    camera: { position: ${arr(p.camera.position)}, target: ${arr(p.camera.target)} },\n` +
-    `    devices: [\n${devs}\n    ],\n` +
-    `  },`
-  );
-}
-
 presetSelect.addEventListener("change", () => {
   const v = presetSelect.value;
   presetSelect.value = ""; // reset so the same preset can be re-applied
@@ -894,32 +875,35 @@ presetSelect.addEventListener("change", () => {
 $("savePreset").addEventListener("click", async () => {
   const name = prompt("Preset name:", "My preset");
   if (!name) return;
-  const preset = capturePreset(name);
-  draftPresets.push(preset);
-  saveDrafts();
+  setStatus("Saving preset…");
+  const data = capturePreset();
+  const { data: row, error } = await supabase
+    .from("shared_presets")
+    .insert({ name, data })
+    .select()
+    .single();
+  if (error) {
+    return setStatus("Save failed: " + error.message + " (did you run supabase/presets.sql?)");
+  }
+  sharedPresets.push({ id: row.id, name: row.name, ...row.data });
   renderPresetSelect();
-  const code = presetToCode(preset);
-  try {
-    await navigator.clipboard.writeText(code);
-  } catch {}
-  console.log("Preset — paste into presets.js DEFAULT_PRESETS:\n" + code);
-  setStatus(`Saved “${name}”. Code copied to clipboard — paste into presets.js to ship it.`);
+  setStatus(`Saved preset “${name}” — everyone gets it now.`);
 });
 
-$("deletePreset").addEventListener("click", () => {
+$("deletePreset").addEventListener("click", async () => {
   const v = presetSelect.value;
-  if (v === "") return setStatus("Pick a draft preset to delete.");
-  const idx = parseInt(v, 10);
-  const entry = allPresets()[idx];
-  if (!entry?.draft) return setStatus("Only your own draft presets can be deleted.");
-  const draftIdx = idx - DEFAULT_PRESETS.length;
-  draftPresets.splice(draftIdx, 1);
-  saveDrafts();
+  if (v === "") return setStatus("Pick a preset to delete.");
+  const entry = allPresets()[parseInt(v, 10)];
+  if (!entry?.id) return setStatus("Built-in presets can't be deleted.");
+  const { error } = await supabase.from("shared_presets").delete().eq("id", entry.id);
+  if (error) return setStatus("Delete failed: " + error.message);
+  sharedPresets = sharedPresets.filter((p) => p.id !== entry.id);
   renderPresetSelect();
-  setStatus("Draft preset deleted.");
+  setStatus("Preset deleted.");
 });
 
 renderPresetSelect();
+loadSharedPresets();
 
 // =====================================================================
 // Account (Supabase auth) + cloud-saved mockups (multi-device)
