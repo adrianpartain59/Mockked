@@ -206,7 +206,8 @@ function selectDevice(dev) {
 
 function renderDeviceBar() {
   const bar = $("deviceBar");
-  bar.innerHTML = "";
+  // Keep the persistent Add Device button; rebuild only the chips after it.
+  bar.querySelectorAll(".device-chip").forEach((c) => c.remove());
   devices.forEach((dev, i) => {
     const chip = document.createElement("div");
     chip.className = "device-chip" + (dev === activeDevice ? " active" : "");
@@ -523,7 +524,6 @@ window.addEventListener("keydown", (e) => {
   if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
   if (e.key === "w") setMode("translate");
   if (e.key === "e") setMode("rotate");
-  if (e.key === "r") setMode("scale");
 });
 
 // =====================================================================
@@ -757,8 +757,9 @@ async function applySceneState(state, imagePaths) {
   renderDeviceBar();
 }
 
-const signedOut = $("signedOut");
-const signedIn = $("signedIn");
+const headerSignedOut = $("headerSignedOut");
+const headerSignedIn = $("headerSignedIn");
+const authModal = $("authModal");
 const authEmail = $("authEmail");
 const authPassword = $("authPassword");
 const authNote = $("authNote");
@@ -770,13 +771,23 @@ function setAuthNote(msg, isError = false) {
   authNote.classList.toggle("error", isError);
 }
 
+function openAuthModal() {
+  setAuthNote("");
+  authModal.hidden = false;
+  authEmail.focus();
+}
+$("openLogin").addEventListener("click", openAuthModal);
+$("openSignup").addEventListener("click", openAuthModal);
+$("authClose").addEventListener("click", () => (authModal.hidden = true));
+
 function updateAuthUI(session) {
   const user = session?.user;
-  signedOut.hidden = !!user;
-  signedIn.hidden = !user;
+  headerSignedOut.hidden = !!user;
+  headerSignedIn.hidden = !user;
   cloudGroup.hidden = !user;
   if (user) {
     $("userEmail").textContent = user.email;
+    authModal.hidden = true; // close the modal once signed in
     refreshMockups();
   } else {
     mockupList.innerHTML = "";

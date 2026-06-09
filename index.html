@@ -4,6 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>iPhone Mockup Generator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="styles.css" />
     <script type="importmap">
       {
@@ -19,6 +25,16 @@
     <header class="topbar">
       <div class="brand">iPhone Mockup Generator</div>
       <div class="hint-inline">Drag to orbit · scroll to zoom · pick a gizmo mode to move/rotate the phone</div>
+      <div class="topbar-auth">
+        <div id="headerSignedOut">
+          <button id="openLogin" class="btn mini">Log in</button>
+          <button id="openSignup" class="btn mini primary">Sign up</button>
+        </div>
+        <div id="headerSignedIn" hidden>
+          <span class="user-pill">Signed in as <strong id="userEmail"></strong></span>
+          <button id="signOut" class="btn mini">Sign out</button>
+        </div>
+      </div>
     </header>
 
     <main class="layout">
@@ -28,33 +44,15 @@
       </section>
 
       <aside class="panel">
-        <!-- Sticky header: Add Device (left) + Save (right), always visible -->
+        <!-- Sticky header: full-width Save, then a scrollable device row -->
         <div class="panel-head">
-          <button id="addDevice" class="btn">＋ Add Device</button>
-          <button id="savePng" class="btn primary">⤓ Save</button>
+          <button id="savePng" class="btn primary">⤓ Save as PNG</button>
         </div>
-        <div class="devicebar" id="deviceBar"></div>
+        <div class="devicebar" id="deviceBar">
+          <button id="addDevice" class="btn add-device">＋ Add Device</button>
+        </div>
 
         <div class="panel-scroll">
-          <div class="group" id="accountGroup">
-            <div class="group-title">Account</div>
-            <div id="signedOut">
-              <input id="authEmail" class="field" type="email" placeholder="email" autocomplete="username" />
-              <input id="authPassword" class="field" type="password" placeholder="password" autocomplete="current-password" />
-              <div class="modes">
-                <button id="signIn" class="btn">Sign in</button>
-                <button id="signUp" class="btn">Sign up</button>
-              </div>
-              <div class="authnote" id="authNote"></div>
-            </div>
-            <div id="signedIn" hidden>
-              <div class="authnote">Signed in as <strong id="userEmail"></strong></div>
-              <button id="signOut" class="btn">Sign out</button>
-            </div>
-          </div>
-
-          <div class="divider"></div>
-
           <div class="group">
             <div class="group-title">Screen</div>
             <label class="btn upload" for="screenInput">⤒ Upload screen image</label>
@@ -82,7 +80,6 @@
             <div class="modes">
               <button class="btn mode active" data-mode="translate" id="modeTranslate">Move (W)</button>
               <button class="btn mode" data-mode="rotate" id="modeRotate">Rotate (E)</button>
-              <button class="btn mode" data-mode="scale" id="modeScale">Scale (R)</button>
             </div>
             <label class="check">
               <input id="gizmoToggle" type="checkbox" checked />
@@ -148,6 +145,24 @@
         </div>
       </aside>
     </main>
+
+    <!-- Account modal -->
+    <div class="modal" id="authModal" hidden>
+      <div class="modal-box auth-box">
+        <div class="modal-title">Account</div>
+        <input id="authEmail" class="field" type="email" placeholder="email" autocomplete="username" />
+        <input id="authPassword" class="field" type="password" placeholder="password" autocomplete="current-password" />
+        <div class="modes">
+          <button id="signIn" class="btn">Log in</button>
+          <button id="signUp" class="btn primary">Sign up</button>
+        </div>
+        <div class="authnote" id="authNote"></div>
+        <div class="modal-actions">
+          <div class="spacer"></div>
+          <button id="authClose" class="btn">Close</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Save / crop modal -->
     <div class="modal" id="saveModal" hidden>
