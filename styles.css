@@ -207,6 +207,7 @@ input[type="range"] { accent-color: var(--accent); }
   line-height: 1.2;
   cursor: pointer;
   text-align: center;
+  white-space: nowrap;
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 .btn:hover { background: var(--panel-hover); border-color: var(--line-strong); }
