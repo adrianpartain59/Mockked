@@ -113,7 +113,9 @@ new GLTFLoader().load(
 // Build one independent iPhone instance (cloned geometry, cloned materials).
 function buildDevice() {
   const model = templateModel.clone(true);
-  const bodyMaterials = {};
+  // Each name can appear on more than one mesh (cloning makes separate material
+  // copies), so collect *all* instances or some surfaces won't get recoloured.
+  const bodyMaterials = { frame: [], antenna: [], back: [] };
   let screenMaterial = null;
   let defaultScreenMaps = null;
 
@@ -134,15 +136,23 @@ function buildDevice() {
         m.opacity = 0.08; // thin the near-black cover glass so the screen reads true
         m.needsUpdate = true;
       }
-      if (m.name === "Anodized aluminum") bodyMaterials.frame = m;
-      if (m.name === "Plastic antena") bodyMaterials.antenna = m;
-      if (m.name === "Frosted glass") bodyMaterials.back = m;
+      if (m.name === "Anodized aluminum") bodyMaterials.frame.push(m);
+      if (m.name === "Plastic antena") bodyMaterials.antenna.push(m);
+      if (m.name === "Frosted glass") bodyMaterials.back.push(m);
     }
   });
-  for (const m of Object.values(bodyMaterials)) {
-    if (m && m.normalScale) m.normalScale.set(0.1, -0.1); // tame the sparkle
+  const allBody = [...bodyMaterials.frame, ...bodyMaterials.antenna, ...bodyMaterials.back];
+  for (const m of allBody) {
+    if (m.normalScale) m.normalScale.set(0.05, -0.05); // tame the sparkle
   }
-  if (bodyMaterials.frame) bodyMaterials.frame.metalness = 0.6;
+  // The aluminium frame is the big "sparkly" surface. Its high metalness made it
+  // mirror the studio HDRI (silver glitter) and hid the chosen colour, so drop
+  // metalness to a satin level where the anodised colour actually reads, and
+  // flatten its detailed normal map that was causing the glitter.
+  for (const m of bodyMaterials.frame) {
+    m.metalness = 0.3;
+    if (m.normalScale) m.normalScale.set(0, 0);
+  }
 
   // Center + scale + face the screen forward, inside a pivot so the outer group
   // transform (driven by gizmo / sliders) starts at identity.
@@ -379,15 +389,17 @@ const finishInput = $("finish");
 function applyDeviceColor(dev, hex) {
   dev.settings.color = hex;
   const c = new THREE.Color(hex);
-  if (dev.bodyMaterials.frame) dev.bodyMaterials.frame.color.copy(c);
   const lighter = c.clone().lerp(new THREE.Color(0xffffff), 0.15);
-  if (dev.bodyMaterials.antenna) dev.bodyMaterials.antenna.color.copy(lighter);
-  if (dev.bodyMaterials.back) dev.bodyMaterials.back.color.copy(c);
+  for (const m of dev.bodyMaterials.frame) m.color.copy(c);
+  for (const m of dev.bodyMaterials.back) m.color.copy(c);
+  for (const m of dev.bodyMaterials.antenna) m.color.copy(lighter);
 }
 
 function applyDeviceFinish(dev, r) {
   dev.settings.finish = r;
-  for (const m of Object.values(dev.bodyMaterials)) if (m) m.roughness = r;
+  for (const key of ["frame", "antenna", "back"]) {
+    for (const m of dev.bodyMaterials[key]) m.roughness = r;
+  }
 }
 
 function updateActiveSwatch(hex) {
