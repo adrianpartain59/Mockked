@@ -99,7 +99,6 @@ new GLTFLoader().load(
     loadingEl.classList.add("hidden");
     addDevice(); // first device
     setStatus("Ready. Upload an image for the screen, or ＋ Add Device.");
-    applyBackground();
     render();
   },
   (e) => {
@@ -513,22 +512,9 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "e") setMode("rotate");
 });
 
-// =====================================================================
-// Scene controls
-// =====================================================================
-const bgColor = $("bgColor");
-const transparentBg = $("transparentBg");
-function applyBackground() {
-  scene.background = transparentBg.checked ? null : new THREE.Color(bgColor.value);
-  render();
-}
-bgColor.addEventListener("input", applyBackground);
-transparentBg.addEventListener("change", applyBackground);
-
-$("envIntensity").addEventListener("input", (e) => {
-  scene.environmentIntensity = parseFloat(e.target.value);
-  render();
-});
+// Scene: background is always transparent, env light is fixed at a good level.
+const ENV_INTENSITY = 1.0;
+scene.environmentIntensity = ENV_INTENSITY;
 
 // =====================================================================
 // Save → crop modal
@@ -702,8 +688,6 @@ onResize();
 // =====================================================================
 function getSceneState() {
   return {
-    bg: bgColor.value,
-    transparent: transparentBg.checked,
     devices: devices.map((d) => ({
       settings: { ...d.settings },
       pos: d.group.position.toArray(),
@@ -737,9 +721,6 @@ async function applySceneState(state, imagePaths) {
       }
     }
   }
-  if (state.bg) bgColor.value = state.bg;
-  transparentBg.checked = !!state.transparent;
-  applyBackground();
   selectDevice(devices[0]);
   renderDeviceBar();
 }
