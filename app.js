@@ -240,8 +240,6 @@ function syncControlsToDevice() {
   $("bodyColor").value = s.color;
   updateActiveSwatch(s.color);
   $("finish").value = s.finish;
-  $("fitMode").value = s.fit;
-  $("brightness").value = s.brightness;
   refreshTransformSliders();
 }
 
@@ -357,12 +355,6 @@ $("clearScreen").addEventListener("click", () => {
   render();
 });
 
-$("fitMode").addEventListener("change", () => {
-  if (!activeDevice) return;
-  activeDevice.settings.fit = $("fitMode").value;
-  applyDeviceFit(activeDevice);
-});
-
 function applyDeviceBrightness(dev, value) {
   dev.settings.brightness = value;
   if (dev.screenMaterial) {
@@ -370,11 +362,6 @@ function applyDeviceBrightness(dev, value) {
     dev.screenMaterial.needsUpdate = true;
   }
 }
-$("brightness").addEventListener("input", () => {
-  if (!activeDevice) return;
-  applyDeviceBrightness(activeDevice, parseFloat($("brightness").value));
-  render();
-});
 
 // =====================================================================
 // Phone color
@@ -737,7 +724,7 @@ async function applySceneState(state, imagePaths) {
     applyDeviceColor(dev, ds.settings.color);
     applyDeviceFinish(dev, ds.settings.finish);
     applyDeviceBrightness(dev, ds.settings.brightness);
-    dev.settings.fit = ds.settings.fit;
+    dev.settings.fit = ds.settings.fit || "cover";
     if (Array.isArray(ds.pos)) dev.group.position.fromArray(ds.pos);
     if (Array.isArray(ds.rot)) dev.group.rotation.set(ds.rot[0], ds.rot[1], ds.rot[2]);
     if (Array.isArray(ds.scale)) dev.group.scale.fromArray(ds.scale);
