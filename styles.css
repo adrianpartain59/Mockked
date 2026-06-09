@@ -174,7 +174,17 @@ input[type="range"] { accent-color: var(--accent); }
   font-size: 13px;
   color: var(--muted);
 }
-.row input[type="range"] { flex: 1; max-width: 150px; }
+.row input[type="range"] { flex: 1; min-width: 0; }
+.row input.num {
+  flex: 0 0 auto;
+  width: 58px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
 .row select, .row input[type="color"] {
   background: var(--panel-2);
   color: var(--text);

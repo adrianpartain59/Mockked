@@ -431,65 +431,83 @@ bodyColorInput.addEventListener("input", () => setBodyColor(bodyColorInput.value
 // =====================================================================
 // Transform: per-axis X/Y/Z for Move / Rotate / Scale
 // =====================================================================
-const tX = $("tX");
-const tY = $("tY");
-const tZ = $("tZ");
+const sliders = [$("tX"), $("tY"), $("tZ")];
+const nums = [$("tXn"), $("tYn"), $("tZn")];
+const AXES = ["x", "y", "z"];
 const RANGES = {
   translate: { min: -0.4, max: 0.4, step: 0.005 },
   rotate: { min: -180, max: 180, step: 1 },
-  scale: { min: 0.2, max: 3, step: 0.01 },
 };
+
+// Format a value for the number box: integer degrees, or 3-dp metres.
+function fmtAxis(v) {
+  return mode === "rotate" ? String(Math.round(v)) : String(Math.round(v * 1000) / 1000);
+}
+// Current value of axis i (position in metres, or rotation in degrees).
+function readAxis(i) {
+  const g = activeDevice.group;
+  return mode === "translate"
+    ? g.position[AXES[i]]
+    : THREE.MathUtils.radToDeg(g.rotation[AXES[i]]);
+}
+// Apply a value to axis i (clamped to the active mode's range). Returns clamped value.
+function writeAxis(i, value) {
+  const r = RANGES[mode];
+  const v = Math.min(r.max, Math.max(r.min, value));
+  const g = activeDevice.group;
+  if (mode === "translate") g.position[AXES[i]] = v;
+  else g.rotation[AXES[i]] = THREE.MathUtils.degToRad(v);
+  return v;
+}
 
 function refreshTransformSliders() {
   if (!activeDevice) return;
-  const g = activeDevice.group;
   const r = RANGES[mode];
-  for (const el of [tX, tY, tZ]) {
-    el.min = r.min;
-    el.max = r.max;
-    el.step = r.step;
-  }
-  if (mode === "translate") {
-    tX.value = g.position.x;
-    tY.value = g.position.y;
-    tZ.value = g.position.z;
-  } else if (mode === "rotate") {
-    tX.value = THREE.MathUtils.radToDeg(g.rotation.x);
-    tY.value = THREE.MathUtils.radToDeg(g.rotation.y);
-    tZ.value = THREE.MathUtils.radToDeg(g.rotation.z);
-  } else {
-    tX.value = g.scale.x;
-    tY.value = g.scale.y;
-    tZ.value = g.scale.z;
+  for (let i = 0; i < 3; i++) {
+    for (const el of [sliders[i], nums[i]]) {
+      el.min = r.min;
+      el.max = r.max;
+      el.step = r.step;
+    }
+    const v = readAxis(i);
+    sliders[i].value = v;
+    nums[i].value = fmtAxis(v);
   }
 }
 
-function onTransformSliderInput() {
-  if (!activeDevice) return;
-  const g = activeDevice.group;
-  const x = parseFloat(tX.value);
-  const y = parseFloat(tY.value);
-  const z = parseFloat(tZ.value);
-  if (mode === "translate") {
-    g.position.set(x, y, z);
-  } else if (mode === "rotate") {
-    g.rotation.set(
-      THREE.MathUtils.degToRad(x),
-      THREE.MathUtils.degToRad(y),
-      THREE.MathUtils.degToRad(z)
-    );
-  } else {
-    g.scale.set(x || 0.001, y || 0.001, z || 0.001);
-  }
-  render();
-}
-[tX, tY, tZ].forEach((el) => el.addEventListener("input", onTransformSliderInput));
+// Sliders drive the value and mirror it into the number box.
+sliders.forEach((el, i) =>
+  el.addEventListener("input", () => {
+    if (!activeDevice) return;
+    nums[i].value = fmtAxis(writeAxis(i, parseFloat(el.value)));
+    render();
+  })
+);
+// Number boxes accept typed values, mirrored into the slider.
+nums.forEach((el, i) => {
+  el.addEventListener("input", () => {
+    if (!activeDevice) return;
+    const raw = parseFloat(el.value);
+    if (Number.isNaN(raw)) return; // mid-typing (e.g. "-" or "")
+    sliders[i].value = writeAxis(i, raw);
+    render();
+  });
+  el.addEventListener("change", () => {
+    if (!activeDevice) return;
+    const raw = parseFloat(el.value);
+    const v = writeAxis(i, Number.isNaN(raw) ? readAxis(i) : raw);
+    sliders[i].value = v;
+    nums[i].value = fmtAxis(v); // normalise / clamp on commit
+    render();
+  });
+});
 
 const modeButtons = [...document.querySelectorAll(".mode")];
 function setMode(m) {
   mode = m;
   transform.setMode(m);
   modeButtons.forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+  $("resetXform").textContent = m === "rotate" ? "↻ Reset rotate" : "↻ Reset move";
   refreshTransformSliders();
   render();
 }
@@ -501,12 +519,16 @@ $("gizmoToggle").addEventListener("change", (e) => {
   render();
 });
 
+// Reset only the active tab (Move resets position, Rotate resets rotation).
 $("resetXform").addEventListener("click", () => {
   if (!activeDevice) return;
-  const i = devices.indexOf(activeDevice);
-  activeDevice.group.position.set(i * DEVICE_SPACING, 0, 0);
-  activeDevice.group.rotation.set(0, 0, 0);
-  activeDevice.group.scale.setScalar(1);
+  const g = activeDevice.group;
+  if (mode === "translate") {
+    const i = devices.indexOf(activeDevice);
+    g.position.set(i * DEVICE_SPACING, 0, 0);
+  } else {
+    g.rotation.set(0, 0, 0);
+  }
   refreshTransformSliders();
   render();
 });
