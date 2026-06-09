@@ -47,7 +47,7 @@ input[type="range"] { accent-color: var(--accent); }
 .topbar-auth #headerSignedOut,
 .topbar-auth #headerSignedIn { display: flex; align-items: center; gap: 8px; }
 .btn.mini { padding: 6px 12px; font-size: 12px; }
-.topbar-auth .btn.mini { padding: 12px 26px; font-size: 17px; font-weight: 600; }
+.topbar-auth .btn.mini { padding: 6px 26px; font-size: 13px; font-weight: 600; }
 .user-pill { font-size: 12px; color: var(--muted); }
 .user-pill strong { color: var(--text); }
 .auth-box { width: min(90vw, 340px); }
