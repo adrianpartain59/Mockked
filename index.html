@@ -14,8 +14,8 @@
     <script type="importmap">
       {
         "imports": {
-          "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+          "three": "https://cdn.jsdelivr.net/npm/three@0.166.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.0/examples/jsm/",
           "@supabase/supabase-js": "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm"
         }
       }
@@ -24,7 +24,15 @@
   <body>
     <header class="topbar">
       <div class="brand">iPhone Mockup Generator</div>
-      <div class="hint-inline">Drag to orbit · scroll to zoom · pick a gizmo mode to move/rotate the phone</div>
+      <input
+        id="projectTitle"
+        class="project-title"
+        type="text"
+        value="Untitled"
+        aria-label="Project title"
+        title="Click to rename"
+      />
+      <div class="hint-inline">Drag to pan · scroll to zoom · pick a gizmo mode to move/rotate the device</div>
       <div class="topbar-auth">
         <div id="headerSignedOut">
           <button id="openLogin" class="btn mini">Log in</button>
@@ -44,8 +52,16 @@
       </section>
 
       <aside class="panel">
-        <!-- Sticky header: full-width Save, then a scrollable device row -->
-        <div class="panel-head">
+        <!-- Tab switcher: Editor controls vs. saved Mockups -->
+        <div class="panel-tabs" id="panelTabs">
+          <button class="panel-tab active" data-tab="editor" id="tabEditor">Editor</button>
+          <button class="panel-tab" data-tab="mockups" id="tabMockups">Mockups</button>
+        </div>
+
+        <div class="tab-panel" id="editorPanel">
+        <!-- Sticky header: full-width Save Mockup + Save as PNG, then a scrollable device row -->
+        <div class="panel-head save-actions">
+          <button id="saveCloud" class="btn">☁ Save Mockup</button>
           <button id="savePng" class="btn primary">⤓ Save as PNG</button>
         </div>
         <div class="devicebar" id="deviceBar">
@@ -53,32 +69,33 @@
         </div>
 
         <div class="panel-scroll">
-          <div class="group">
-            <div class="group-title">Presets</div>
+          <details class="group">
+            <summary class="group-title">Presets</summary>
             <select id="presetSelect" class="preset-select"></select>
             <div class="modes">
               <button id="savePreset" class="btn">＋ Save preset</button>
               <button id="deletePreset" class="btn">🗑 Delete</button>
             </div>
             <div class="authnote" id="presetNote">
-              Save adds a shared preset everyone gets (device transforms + camera, not the screen image).
+              Save adds a shared preset everyone gets (device transforms only, not the camera or screen image).
             </div>
-          </div>
+          </details>
 
-          <div class="divider"></div>
-
-          <div class="group">
-            <div class="group-title">Screen</div>
-            <label class="btn upload" for="screenInput">⤒ Upload screen image</label>
-            <input id="screenInput" type="file" accept="image/*" hidden />
+          <details class="group">
+            <summary class="group-title">Screen</summary>
+            <button id="importScreen" class="btn upload">⤒ Import to screen</button>
             <div class="assetrow" id="assetRow"></div>
             <button id="clearScreen" class="btn">Reset screen</button>
-          </div>
+          </details>
 
-          <div class="divider"></div>
+          <details class="group">
+            <summary class="group-title">Background</summary>
+            <button id="importBackground" class="btn upload">⤒ Import background image</button>
+            <button id="clearBackground" class="btn">Remove background</button>
+          </details>
 
-          <div class="group">
-            <div class="group-title">Transform</div>
+          <details class="group">
+            <summary class="group-title">Transform</summary>
             <div class="modes">
               <button class="btn mode active" data-mode="translate" id="modeTranslate">Move (W)</button>
               <button class="btn mode" data-mode="rotate" id="modeRotate">Rotate (E)</button>
@@ -103,31 +120,51 @@
               <input id="tZn" type="number" class="num" />
             </label>
             <button id="resetXform" class="btn">↻ Reset move</button>
-          </div>
+          </details>
 
-          <div class="divider"></div>
-
-          <div class="group">
-            <div class="group-title">Phone color</div>
+          <details class="group">
+            <summary class="group-title">Phone color</summary>
             <div class="swatches" id="swatches"></div>
             <label class="row">
               <span>Custom</span>
               <input id="bodyColor" type="color" value="#4a4a50" />
             </label>
-          </div>
-
-          <div class="divider"></div>
-
-          <div class="group" id="cloudGroup">
-            <div class="group-title">My mockups</div>
-            <button id="saveCloud" class="btn">☁ Save mockup to cloud</button>
-            <div class="mockup-list" id="mockupList"></div>
-          </div>
+            <label class="row">
+              <span>Finish</span>
+              <input id="finish" type="range" min="0" max="1" step="0.01" value="0.42" />
+              <input id="finishN" type="number" class="num" min="0" max="1" step="0.01" value="0.42" />
+            </label>
+            <div class="hint-inline">Glossy ← → Matte</div>
+          </details>
 
           <div class="status" id="status">Loading…</div>
         </div>
+        </div>
+
+        <div class="tab-panel" id="mockupsPanel" hidden>
+          <div class="panel-scroll">
+            <div id="cloudGroup">
+              <div class="mockup-list" id="mockupList"></div>
+            </div>
+            <div class="authnote" id="mockupsSignedOutNote" hidden>
+              Sign in to view and save your mockups.
+            </div>
+          </div>
+        </div>
       </aside>
     </main>
+
+    <!-- Device picker modal -->
+    <div class="modal" id="devicePickerModal" hidden>
+      <div class="modal-box device-picker-box">
+        <div class="modal-title">Add Device</div>
+        <div class="device-picker-grid" id="devicePickerGrid"></div>
+        <div class="modal-actions">
+          <div class="spacer"></div>
+          <button id="devicePickerCancel" class="btn">Cancel</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Account modal -->
     <div class="modal" id="authModal" hidden>
@@ -143,6 +180,63 @@
         <div class="modal-actions">
           <div class="spacer"></div>
           <button id="authClose" class="btn">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Asset import / library modal -->
+    <div class="modal" id="assetModal" hidden>
+      <div class="modal-box asset-lib-box">
+        <div class="modal-title" id="assetModalTitle">Import to screen</div>
+        <div class="asset-tabs">
+          <button class="asset-tab active" data-tab="upload" id="assetTabUpload">Upload</button>
+          <button class="asset-tab" data-tab="library" id="assetTabLibrary">Uploaded assets</button>
+        </div>
+
+        <div class="asset-tab-panel" id="assetUploadPanel">
+          <div class="dropzone" id="assetDropzone">
+            <div class="dropzone-icon">⤒</div>
+            <div class="dropzone-text" id="dropzoneText">Drag &amp; drop an image or video here</div>
+            <button class="btn primary" id="assetPickBtn">Click to upload</button>
+            <input id="assetFileInput" type="file" hidden multiple />
+          </div>
+        </div>
+
+        <div class="asset-tab-panel" id="assetLibraryPanel" hidden>
+          <div class="asset-grid" id="assetLibraryGrid"></div>
+          <div class="authnote" id="assetLibraryNote"></div>
+        </div>
+
+        <div class="modal-actions">
+          <div class="spacer"></div>
+          <button id="assetModalClose" class="btn">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Video trim editor modal -->
+    <div class="modal" id="trimModal" hidden>
+      <div class="modal-box trim-box">
+        <div class="modal-title">Trim video</div>
+        <div class="trim-stage">
+          <video id="trimVideo" muted playsinline></video>
+        </div>
+        <div class="trim-track" id="trimTrack">
+          <div class="trim-range" id="trimRange"></div>
+          <div class="trim-playhead" id="trimPlayhead"></div>
+          <div class="trim-handle start" id="trimStartHandle" data-h="start"></div>
+          <div class="trim-handle end" id="trimEndHandle" data-h="end"></div>
+        </div>
+        <div class="trim-times">
+          <span>Start <strong id="trimStartLabel">0:00</strong></span>
+          <span>End <strong id="trimEndLabel">0:00</strong></span>
+        </div>
+        <div class="modal-actions">
+          <button id="trimRemove" class="btn danger">🗑 Remove video</button>
+          <button id="trimRevert" class="btn">↺ Revert trim</button>
+          <div class="spacer"></div>
+          <button id="trimCancel" class="btn">Cancel</button>
+          <button id="trimApply" class="btn primary">✂ Trim</button>
         </div>
       </div>
     </div>

@@ -1,16 +1,7 @@
-// Default presets shipped to everyone.
+// Presets are now stored entirely in Supabase (the `shared_presets` table) so
+// there is a single source of truth. The previous built-in defaults ("Front",
+// "TwoPhone1") have been migrated into that table — see supabase/presets.sql.
 //
-// Each preset captures the camera view plus every device's transform
-// (position / rotation in radians / scale). The screen image is intentionally
-// NOT stored — users add their own after applying a preset.
-//
-// To add a default: arrange the scene in the app, click "Save preset", and the
-// generated object is copied to your clipboard + logged to the console. Paste it
-// into this array below.
-export const DEFAULT_PRESETS = [
-  {
-    name: "Front",
-    camera: { position: [0, 0.05, 0.6], target: [0, 0, 0] },
-    devices: [{ pos: [0, 0, 0], rot: [0, 0, 0], scale: [1, 1, 1] }],
-  },
-];
+// This array is intentionally empty. To add a shared default, use "Save preset"
+// in the app (which inserts a row into shared_presets) or seed it via SQL.
+export const DEFAULT_PRESETS = [];
