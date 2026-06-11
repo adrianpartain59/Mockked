@@ -45,15 +45,34 @@ A local server is required (the browser can't load the `.glb`/`.exr` over `file:
   in `presets.js` as a fallback. Run [`supabase/presets.sql`](supabase/presets.sql)
   once to create the shared table. (Per-account presets can come later; for now
   shared presets are open for anyone to add/remove — see the SQL to lock down.)
-- **Animation** — a Rotato-style timeline dock sits under the stage. A keyframe
-  snapshots the *whole scene* (camera + every device's transform): pose the
-  scene, press **Add keyframe** (`K`), move the playhead, pose again. Playback
-  tweens between snapshots (quaternion slerp) with per-keyframe easing (click a
-  diamond to pick Ease / Ease-in / Ease-out / Linear, drag it to retime, `Space`
-  plays). Keyframe times are normalized, so the **Duration** field stretches the
-  whole animation. The **Animate** menu has 7 presets built from the current
-  pose: Hero Orbit, Showcase Sweep, Pop In, Float, Swing, Dolly Reveal, and
-  Slide & Settle. Animations save with cloud mockups.
+- **Animation timeline** — a Rotato-style dock under the stage with three
+  composable layers:
+  - **Animation clips** (Animations lane) — per-device procedural presets
+    (Hero Orbit, Showcase Sweep, Pop In, Rise Up, Fly In Right, Float, Swing,
+    Dolly Reveal, Slide & Settle) added as bars via **＋ Add animation**. Drag a
+    bar to retime it, drag its edges to stretch/compress, sequence several one
+    after another (bars snap to neighbours and the playhead), or overlap them to
+    sum their motion. Each preset samples independent per-channel curves
+    (`chan()` in `app.js`) so e.g. X can decelerate while Y accelerates; clips
+    bring their own natural duration and the timeline auto-extends to fit.
+  - **Screen media clips** (Screen lane) — sequence images/videos on a device's
+    screen over time via **＋ Add media**; the bar shows the media thumbnail and
+    the screen reverts to its base content outside the clips.
+  - **Scene keyframes** (diamonds on the track) — manual whole-scene snapshots:
+    pose, press **Add keyframe** (`K`), move the playhead, pose again. Tweens
+    use quaternion slerp with per-keyframe easing. Keyframe times are
+    normalized (they stretch with **Duration**); clips keep absolute timing.
+
+  Clips are specific to the *selected device* — the lane header shows whose
+  clips you're editing. Dragging/resizing clips **snaps** to the ¼ / ½ / 1-second
+  grid (and magnetically to neighbouring clip edges and the playhead) when the
+  magnet toggle is on; turn it off for free placement. The timeline **zooms**
+  (−/＋ buttons or ⌘-scroll) centered on the playhead. `Space` plays, `Delete`
+  removes the selected clip/keyframe. **Clear** restores the scene (pose *and*
+  screens) to exactly how it was before animating; moving a device while paused
+  re-anchors the animation around the new pose. Keyframes + animation clips save
+  with cloud mockups (screen clips reference session uploads and aren't persisted
+  yet).
 - **Export** — the top-bar button renders the scene and opens a **crop modal**:
   drag/resize the crop box, then download the cropped region. Stills export as
   transparent PNG; when the timeline has keyframes (or a screen plays a video
@@ -61,7 +80,10 @@ A local server is required (the browser can't load the `.glb`/`.exr` over `file:
   of the animation — ready for ads.
 - **Accounts & cloud sync** — sign up / sign in (email + password), then save
   mockups to the cloud and reload them later. Each saved mockup stores its
-  settings (colour, transform, fit, brightness) plus the screen image.
+  settings (colour, transform, fit, brightness) plus the screen image. **Save**
+  updates the project you're currently editing (loaded or previously saved)
+  rather than creating a duplicate; it only starts a new record for a fresh,
+  never-saved project.
 
 ## Cloud setup (Supabase)
 

@@ -118,6 +118,7 @@ transform.addEventListener("dragging-changed", (e) => {
 });
 transform.addEventListener("objectChange", () => {
   refreshTransformSliders();
+  tlRebaseRest(); // manual pose edits update the animation's base pose
   render();
 });
 transform.addEventListener("change", render);
@@ -206,7 +207,8 @@ const templateModels = new Map();   // typeId → { scene, center, scale }
 const deviceTypeCounts = new Map(); // typeId → running label counter
 const devices = [];
 let activeDevice = null;
-let activeKind = "device"; // what the gizmo + X/Y/Z controls drive: 'device' | 'background'
+// what the gizmo + X/Y/Z controls drive: 'device' | 'background' | 'imagelayer'
+let activeKind = "device";
 let deviceCounter = 0;
 let mode = "translate";
 
@@ -472,6 +474,7 @@ function selectDevice(dev) {
   transform.visible = $("gizmoToggle").checked;
   syncControlsToDevice();
   renderDeviceBar();
+  tlOnActiveDeviceChanged(); // clip lanes show the active device's clips
   render();
 }
 
@@ -540,6 +543,30 @@ function renderDeviceBar() {
     chip.addEventListener("click", selectBackground);
     bar.appendChild(chip);
   }
+
+  // Image layer chips — one per free-floating image layer.
+  imageLayers.forEach((layer, idx) => {
+    const chip = document.createElement("div");
+    chip.className = "device-chip" +
+      (activeKind === "imagelayer" && layer === activeImageLayer ? " active" : "");
+    const icon = document.createElement("span");
+    icon.className = "chip-icon";
+    icon.innerHTML = '<svg class="i"><use href="#i-image"/></svg>';
+    const label = document.createElement("span");
+    label.textContent = `Image ${idx + 1}`;
+    chip.append(icon, label);
+    const x = document.createElement("button");
+    x.className = "x";
+    x.textContent = "×";
+    x.title = "Remove image layer";
+    x.addEventListener("click", (e) => {
+      e.stopPropagation();
+      removeImageLayer(layer);
+    });
+    chip.appendChild(x);
+    chip.addEventListener("click", () => selectImageLayer(layer));
+    bar.appendChild(chip);
+  });
 }
 
 $("addDevice").addEventListener("click", openDevicePicker);
@@ -585,6 +612,16 @@ canvas.addEventListener("pointerup", (e) => {
       node = node.parent;
     }
     return;
+  }
+  // Then image layers (in the main scene, in front of devices).
+  if (imageLayers.length) {
+    const layerMeshes = imageLayers.map((l) => l.mesh);
+    const layerHits = _raycaster.intersectObjects(layerMeshes, false);
+    if (layerHits.length) {
+      const layer = imageLayers.find((l) => l.mesh === layerHits[0].object);
+      if (layer && (layer !== activeImageLayer || activeKind !== "imagelayer")) selectImageLayer(layer);
+      if (layer) return;
+    }
   }
   if (bgLayer.active && bgLayer.mesh) {
     const bgHits = _raycaster.intersectObject(bgLayer.mesh, false);
@@ -947,6 +984,95 @@ function clearBackground() {
 $("clearBackground").addEventListener("click", clearBackground);
 
 // =====================================================================
+// Image layers — a raw image dropped into the scene as a free-floating plane.
+// Unlike a screen (cropped to a device) or a background (cover-fit + locked
+// behind the devices), an image layer keeps the image's native aspect ratio
+// untouched and is fully manipulable: it's a real object in the main scene,
+// selectable and driven by the same gizmo + X/Y/Z transform controls as a
+// device (move / rotate / push along Z to zoom), and captured by the export.
+// =====================================================================
+const IMG_HOME_Z = 0.08;      // rest just in front of the devices so it reads as a layer
+const IMG_LONG_EDGE = 0.22;   // metres along the image's longest side at home
+const imageLayers = [];
+let activeImageLayer = null;
+let imageLayerCounter = 0;
+
+function addImageLayerFromAsset(asset) {
+  new THREE.TextureLoader().load(
+    asset.url,
+    (tex) => {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      const w = tex.image.width || 1;
+      const h = tex.image.height || 1;
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex,
+        toneMapped: false,
+        side: THREE.DoubleSide,
+        transparent: true, // honour PNG alpha so cut-outs drop in cleanly
+      });
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+      // Size to the native aspect ratio so nothing is stretched or cropped.
+      const aspect = w / h;
+      const planeW = aspect >= 1 ? IMG_LONG_EDGE : IMG_LONG_EDGE * aspect;
+      const planeH = aspect >= 1 ? IMG_LONG_EDGE / aspect : IMG_LONG_EDGE;
+      mesh.scale.set(planeW, planeH, 1);
+      const group = new THREE.Group();
+      group.position.set(0, 0, IMG_HOME_Z);
+      group.add(mesh);
+      scene.add(group);
+      const layer = {
+        id: ++imageLayerCounter,
+        group,
+        mesh,
+        material: mat,
+        texture: tex,
+        asset,
+        imageSize: { w, h },
+      };
+      imageLayers.push(layer);
+      selectImageLayer(layer);
+      renderDeviceBar();
+      setStatus("Image layer added. Move, rotate or zoom it freely — nothing is cropped.");
+      render();
+    },
+    undefined,
+    () => setStatus("Couldn't load that image.")
+  );
+}
+
+function selectImageLayer(layer) {
+  if (!layer) return;
+  activeImageLayer = layer;
+  activeKind = "imagelayer";
+  transform.attach(layer.group);
+  transform.enabled = $("gizmoToggle").checked;
+  transform.visible = $("gizmoToggle").checked;
+  refreshTransformSliders();
+  renderDeviceBar();
+  render();
+}
+
+function removeImageLayer(layer) {
+  const i = imageLayers.indexOf(layer);
+  if (i < 0) return;
+  scene.remove(layer.group);
+  layer.texture?.dispose();
+  layer.material?.dispose();
+  layer.mesh?.geometry?.dispose();
+  imageLayers.splice(i, 1);
+  if (activeImageLayer === layer) {
+    activeImageLayer = null;
+    if (activeKind === "imagelayer") selectDevice(activeDevice);
+  }
+  renderDeviceBar();
+  setStatus("Image layer removed.");
+  render();
+}
+
+$("addImageLayer").addEventListener("click", () => openAssetModal("imagelayer"));
+
+// =====================================================================
 // Asset import / library modal: drag-drop or pick files, browse uploaded assets,
 // delete them. Uploads persist to the signed-in user's account (Supabase
 // `user_assets` + `assets` storage bucket); signed-out uploads stay session-only.
@@ -957,16 +1083,24 @@ const assetDropzone = $("assetDropzone");
 const assetLibraryGrid = $("assetLibraryGrid");
 let assetModalMode = "screen"; // 'screen' | 'background'
 let currentUser = null;        // set by the auth state listener
+// The cloud mockup currently being edited. Set when you load or first save a
+// project, so subsequent Saves UPDATE that row instead of creating duplicates.
+let currentMockup = null;      // { id, paths: [storage paths of its screen images] }
 let remoteAssetsLoaded = false;
 
 function openAssetModal(mode) {
   assetModalMode = mode;
-  $("assetModalTitle").textContent = mode === "background" ? "Import background image" : "Import to screen";
-  $("dropzoneText").textContent = mode === "background"
+  const imageOnly = mode === "background" || mode === "imagelayer";
+  $("assetModalTitle").textContent =
+    mode === "background" ? "Import background image"
+    : mode === "imagelayer" ? "Add image layer"
+    : mode === "screenClip" ? "Add screen media to the timeline"
+    : "Import to screen";
+  $("dropzoneText").textContent = imageOnly
     ? "Drag & drop an image here"
     : "Drag & drop an image or video here";
-  // Backgrounds are images only; screens accept images and videos.
-  assetFileInput.accept = mode === "background" ? "image/*" : "image/*,video/*";
+  // Backgrounds and image layers are images only; screens accept images and videos.
+  assetFileInput.accept = imageOnly ? "image/*" : "image/*,video/*";
   switchAssetTab("upload");
   renderAssetLibrary();
   assetModal.hidden = false;
@@ -988,17 +1122,23 @@ function switchAssetTab(tab) {
 // An asset is allowed for the current mode if its kind matches (background = image
 // only). Returns true/false.
 function assetAllowedForMode(asset) {
-  return assetModalMode === "background" ? asset.type === "image" : true;
+  return (assetModalMode === "background" || assetModalMode === "imagelayer")
+    ? asset.type === "image"
+    : true;
 }
 
 // Apply an asset per the modal's mode, then close.
 function chooseAsset(asset) {
   if (!assetAllowedForMode(asset)) {
-    setStatus("Backgrounds must be image files.");
+    setStatus("This must be an image file.");
     return;
   }
   if (assetModalMode === "background") {
     setBackgroundFromAsset(asset);
+  } else if (assetModalMode === "imagelayer") {
+    addImageLayerFromAsset(asset);
+  } else if (assetModalMode === "screenClip") {
+    tlAddScreenClip(asset);
   } else if (asset.type === "video") {
     applyScreenVideoToDevice(activeDevice, asset);
   } else {
@@ -1094,11 +1234,12 @@ async function ingestFile(file) {
 // Handle a batch of picked/dropped files. Applies the first valid one to the
 // current target (screen/background) and keeps the rest in the library.
 async function handleIncomingFiles(fileList) {
+  const imageOnly = assetModalMode === "background" || assetModalMode === "imagelayer";
   const files = [...fileList].filter((f) =>
-    assetModalMode === "background" ? f.type.startsWith("image/") : (f.type.startsWith("image/") || f.type.startsWith("video/"))
+    imageOnly ? f.type.startsWith("image/") : (f.type.startsWith("image/") || f.type.startsWith("video/"))
   );
   if (!files.length) {
-    setStatus(assetModalMode === "background" ? "Pick an image file." : "Pick an image or video file.");
+    setStatus(imageOnly ? "Pick an image file." : "Pick an image or video file.");
     return;
   }
   setStatus("Uploading…");
@@ -1122,6 +1263,10 @@ async function deleteAsset(asset) {
     }
   }
   if (bgLayer.active && bgLayer.asset === asset) clearBackground();
+  for (const layer of [...imageLayers]) {
+    if (layer.asset === asset) removeImageLayer(layer);
+  }
+  tlOnAssetDeleted(asset); // drop any screen clips that referenced it
   const i = assets.indexOf(asset);
   if (i >= 0) assets.splice(i, 1);
   if (!asset.remote) URL.revokeObjectURL(asset.url);
@@ -1514,16 +1659,22 @@ const BG_RANGES = {
 };
 const BG_Z_RANGE = { min: -3, max: 0.45, step: 0.01 }; // pull back = zoom out, push in = zoom in
 
-// The group the gizmo / sliders currently drive (a device or the background).
+// The group the gizmo / sliders currently drive (a device, the background, or an
+// image layer). Image layers reuse the background's wider pan / zoom ranges.
 function transformTarget() {
-  return activeKind === "background" ? bgLayer.group : (activeDevice && activeDevice.group);
+  if (activeKind === "background") return bgLayer.group;
+  if (activeKind === "imagelayer") return activeImageLayer && activeImageLayer.group;
+  return activeDevice && activeDevice.group;
 }
 function currentRanges() {
-  return (activeKind === "background" ? BG_RANGES : RANGES)[mode];
+  const wide = activeKind === "background" || activeKind === "imagelayer";
+  return (wide ? BG_RANGES : RANGES)[mode];
 }
-// Per-axis range. The background's Z axis is the zoom control with its own range.
+// Per-axis range. The background / image-layer Z axis is the zoom control with its
+// own range.
 function axisRange(i) {
-  if (activeKind === "background" && mode === "translate" && i === 2) return BG_Z_RANGE;
+  const wide = activeKind === "background" || activeKind === "imagelayer";
+  if (wide && mode === "translate" && i === 2) return BG_Z_RANGE;
   return currentRanges();
 }
 
@@ -1568,6 +1719,7 @@ sliders.forEach((el, i) =>
   el.addEventListener("input", () => {
     if (!activeDevice) return;
     nums[i].value = fmtAxis(writeAxis(i, parseFloat(el.value)));
+    tlRebaseRest();
     render();
   })
 );
@@ -1578,6 +1730,7 @@ nums.forEach((el, i) => {
     const raw = parseFloat(el.value);
     if (Number.isNaN(raw)) return; // mid-typing (e.g. "-" or "")
     sliders[i].value = writeAxis(i, raw);
+    tlRebaseRest();
     render();
   });
   el.addEventListener("change", () => {
@@ -1615,6 +1768,9 @@ $("resetXform").addEventListener("click", () => {
   if (activeKind === "background") {
     if (mode === "translate") g.position.set(0, 0, BG_HOME_Z);
     else g.rotation.set(0, 0, 0);
+  } else if (activeKind === "imagelayer") {
+    if (mode === "translate") g.position.set(0, 0, IMG_HOME_Z);
+    else g.rotation.set(0, 0, 0);
   } else if (mode === "translate") {
     const i = devices.indexOf(activeDevice);
     g.position.set(i * DEVICE_SPACING, 0, 0);
@@ -1622,6 +1778,7 @@ $("resetXform").addEventListener("click", () => {
     g.rotation.set(0, 0, 0);
   }
   refreshTransformSliders();
+  tlRebaseRest();
   render();
 });
 
@@ -1632,6 +1789,7 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "e") setMode("rotate");
   if (e.key === " ") { e.preventDefault(); tlTogglePlay(); }
   if (e.key === "k") { tlPause(); tlAddOrUpdateKey(); }
+  if (e.key === "Delete" || e.key === "Backspace") tlDeleteSelection();
 });
 
 // Scene: background is always transparent. The key/fill/env levels are set
@@ -2361,6 +2519,7 @@ function updateAuthUI(session) {
     loadRemoteAssets();
   } else {
     mockupList.innerHTML = "";
+    currentMockup = null; // signed out — no project is being edited
     // Drop account-backed assets from the library on sign-out.
     for (let i = assets.length - 1; i >= 0; i--) {
       if (assets[i].remote) assets.splice(i, 1);
@@ -2418,14 +2577,28 @@ $("saveCloud").addEventListener("click", async () => {
   }
 
   const settings = { ...getSceneState(), imagePaths };
-  const { error } = await supabase.from("mockups").insert({
+  const row = {
     user_id: user.id,
     name: name || "Untitled",
     settings,
     image_path: imagePaths.find(Boolean) || null,
-  });
-  if (error) return setStatus("Save failed: " + error.message);
-  setStatus(`Saved “${name || "Untitled"}”.`);
+  };
+
+  // Update the project we're already editing; otherwise create a new one.
+  if (currentMockup?.id) {
+    const { error } = await supabase.from("mockups").update(row).eq("id", currentMockup.id);
+    if (error) return setStatus("Save failed: " + error.message);
+    // The fresh upload replaced the old screen images; remove the orphans.
+    const stale = (currentMockup.paths || []).filter((p) => p && !imagePaths.includes(p));
+    if (stale.length) await supabase.storage.from("mockups").remove(stale);
+    currentMockup.paths = imagePaths.filter(Boolean);
+    setStatus(`Updated “${name || "Untitled"}”.`);
+  } else {
+    const { data, error } = await supabase.from("mockups").insert(row).select("id").single();
+    if (error) return setStatus("Save failed: " + error.message);
+    currentMockup = { id: data.id, paths: imagePaths.filter(Boolean) };
+    setStatus(`Saved “${name || "Untitled"}”.`);
+  }
   refreshMockups();
 });
 
@@ -2469,6 +2642,10 @@ async function loadMockup(row) {
   setStatus(`Loading “${row.name}”…`);
   const s = row.settings || {};
   await applySceneState(s, s.imagePaths);
+  // Remember it so the next Save updates this project instead of duplicating it,
+  // and sync the header title to match.
+  currentMockup = { id: row.id, paths: (s.imagePaths || []).filter(Boolean) };
+  projectTitle.value = row.name || "Untitled";
   setStatus(`Loaded “${row.name}”.`);
 }
 
@@ -2478,16 +2655,30 @@ async function deleteMockup(row) {
   if (paths.length) await supabase.storage.from("mockups").remove(paths);
   const { error } = await supabase.from("mockups").delete().eq("id", row.id);
   if (error) return setStatus("Delete failed: " + error.message);
+  // If we deleted the project we're editing, the next Save starts a fresh one.
+  if (currentMockup?.id === row.id) currentMockup = null;
   setStatus(`Deleted “${row.name}”.`);
   refreshMockups();
 }
 
 // =====================================================================
-// Animation timeline — Rotato-style scene-snapshot keyframes.
-// A keyframe captures the camera and every device's transform at a point on
-// a normalized 0..1 timeline; playback tweens between snapshots (position/
-// scale lerp, quaternion slerp) with per-keyframe easing. Keyframe times are
-// normalized, so changing Duration stretches the whole animation.
+// Animation timeline — clip-based, Rotato-style.
+//
+// Three layers compose every frame in tlApplyU():
+//   1. BASE pose — manual scene keyframes (interpolated) when present,
+//      otherwise the rest snapshot captured when the timeline first gained
+//      content. Clearing the timeline restores this rest pose.
+//   2. ANIMATION CLIPS — per-device procedural offset curves (CLIP_PRESETS),
+//      sequenced as draggable / stretchable bars in the Animations lane.
+//      Each preset samples independent channels (dx/dy/dz, rx/ry/rz, scale,
+//      camera pull) with per-channel easing, so e.g. X can decelerate while
+//      Y accelerates.
+//   3. SCREEN CLIPS — per-device media sequence in the Screen lane; the
+//      device's screen swaps to the clip's image/video while the playhead is
+//      inside it and reverts to the base screen outside.
+//
+// Times: keyframes store normalized u (they stretch with Duration); clips
+// store absolute seconds (bars keep their timing when Duration changes).
 //
 // Declared with `var` (not const) so the early synchronous animate() call can
 // hit tlTick()'s `if (!TL)` guard instead of a temporal-dead-zone error.
@@ -2496,39 +2687,258 @@ var TL = {
   duration: 5, // seconds
   loop: true,
   keyframes: [], // sorted by u: { u, easing, cam, devices[], bg }
+  clips: [], // { id, dev, preset, start, dur }  (seconds)
+  screenClips: [], // { id, dev, asset, start, dur }  (asset = session object)
   playing: false,
   time: 0, // playhead, seconds
   playT0: 0, // performance.now() anchor while playing
-  selected: null,
+  selected: null, // selected keyframe
+  selClip: null, // selected clip (animation or screen, object ref)
+  lane: "anim", // visible lane: "anim" | "screen"
+  zoom: 1, // 1 = fit, up to 8×
+  snap: true, // snap dragged clips to the ¼/½/1-second grid + magnets
+  rest: null, // scene snapshot from before the first keyframe/clip — restored on Clear
 };
 
+let _tlClipSeq = 0;
+
 const tlTrack = $("tlTrack");
+const tlLaneEl = $("tlLane");
 const tlRulerEl = $("tlRuler");
+const tlScrollEl = $("tlScroll");
+const tlContentEl = $("tlContent");
 const tlPlayheadEl = $("tlPlayhead");
 const tlPlayBtn = $("tlPlay");
 const tlPlayIcon = $("tlPlayIcon");
 const tlPresetsMenu = $("tlPresetsMenu");
 
-const TL_EASE = {
+// ---- Easing ----
+// One shared map; keyframes use the long names, channel curves the short ones.
+const EASE_FN = {
   linear: (t) => t,
-  ease: (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
-  "ease-in": (t) => t * t * t,
-  "ease-out": (t) => 1 - Math.pow(1 - t, 3),
+  in: (t) => t * t * t,
+  out: (t) => 1 - Math.pow(1 - t, 3),
+  inout: (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
 };
+EASE_FN.ease = EASE_FN.inout;
+EASE_FN["ease-in"] = EASE_FN.in;
+EASE_FN["ease-out"] = EASE_FN.out;
 
-function animActive() {
-  return !!TL && TL.keyframes.length >= 2;
+// Piecewise channel curve: points = [[u, value, easeOut?], ...] sorted by u.
+// The third entry names the easing of the segment LEAVING that point.
+// This is the building block for complex multi-phase motions.
+function chan(u, points) {
+  if (u <= points[0][0]) return points[0][1];
+  for (let i = 0; i < points.length - 1; i++) {
+    const [ua, va, ez] = points[i];
+    const [ub, vb] = points[i + 1];
+    if (u <= ub) {
+      const t = (EASE_FN[ez || "inout"])((u - ua) / Math.max(1e-6, ub - ua));
+      return va + (vb - va) * t;
+    }
+  }
+  return points[points.length - 1][1];
 }
 
-// ---- Snapshots ----
+function animActive() {
+  return !!TL && (TL.keyframes.length >= 2 || TL.clips.length > 0 || TL.screenClips.length > 0);
+}
+
+// =====================================================================
+// Animation clip presets — procedural offset curves.
+// sample(u) returns offsets composed onto the device's base pose:
+//   dx/dy/dz (world metres), rx/ry/rz (world deg), s (scale ×),
+//   camPull (0..1 toward the camera target), camDy (camera y nudge).
+// =====================================================================
+const CLIP_PRESETS = [
+  {
+    id: "heroOrbit",
+    name: "Hero Orbit",
+    desc: "360° turntable that lingers on the screen and whips around the back — loops seamlessly.",
+    dur: 4,
+    // Constant-direction spin whose angular velocity dips when the screen faces
+    // the camera (u=0/1 → ry=0/360) and peaks when it faces away (u=0.5 → ry=180).
+    // ry is the integral of ω(u)=360·(1−k·cos2πu), i.e. ry = 360u − (180k/π)·sin2πu,
+    // so it stays monotonic (never reverses), and position, velocity AND
+    // acceleration all match across the u=1→0 seam for a jerk-free loop.
+    // k=0.75 → the back of the spin is 7× faster than the front (1.75 vs 0.25).
+    sample: (u) => ({
+      ry: 360 * u - (180 * 0.75 / Math.PI) * Math.sin(2 * Math.PI * u),
+    }),
+  },
+  {
+    id: "sweep",
+    name: "Showcase Sweep",
+    desc: "Gentle side-to-side turn, like a product hero shot.",
+    dur: 4,
+    sample: (u) => ({
+      ry: chan(u, [[0, -24], [0.5, 24], [1, -24]]),
+      rx: 4,
+    }),
+  },
+  {
+    id: "popIn",
+    name: "Pop In",
+    desc: "Rises from below and settles with a soft overshoot.",
+    dur: 1.6,
+    sample: (u) => ({
+      dy: chan(u, [[0, -0.3, "out"], [0.7, 0.012], [1, 0]]),
+      ry: chan(u, [[0, -28, "out"], [0.7, 3], [1, 0]]),
+      s: chan(u, [[0, 0.7, "out"], [0.7, 1.02], [1, 1]]),
+    }),
+  },
+  {
+    id: "riseUp",
+    name: "Rise Up",
+    desc: "Comes up from below, overshoots, falls into place.",
+    dur: 1,
+    sample: (u) => ({
+      dy: chan(u, [[0, -0.22, "out"], [0.7, 0.005], [1, 0]]),
+    }),
+  },
+  {
+    id: "flyInRight",
+    name: "Fly In Right",
+    desc: "Swings in from the lower right while scaling up, then settles.",
+    dur: 2,
+    sample: (u) => ({
+      // x decelerates in (fast → slow), reaching a small overshoot at u=0.72
+      // with velocity ~0 — that's the instant the leftward movement stops.
+      dx: chan(u, [[0, 0.28, "out"], [0.72, -0.006], [1, 0]]),
+      // y rises on a single smooth ease-in-out: a gentle slow start (the vertical
+      // still lags the horizontal, so the swing reads), a moderate velocity peak
+      // in the middle, then a decelerate to a stop at u=0.72 — the same instant x
+      // stops. The single S-curve keeps the peak velocity low and centred, so the
+      // upward motion never surges while the leftward motion is already crawling.
+      dy: chan(u, [[0, -0.1, "inout"], [0.72, 0.005], [1, 0]]),
+      s: chan(u, [[0, 0.55, "out"], [0.72, 1.004], [1, 1]]),
+    }),
+  },
+  {
+    id: "float",
+    name: "Float",
+    desc: "Weightless hover with a hint of tilt — loops.",
+    dur: 4,
+    sample: (u) => ({
+      dy: 0.012 * Math.sin(2 * Math.PI * u),
+      rz: 1.4 * Math.sin(2 * Math.PI * u),
+    }),
+  },
+  {
+    id: "swing",
+    name: "Swing",
+    desc: "Pendulum rotation around the vertical axis — loops.",
+    dur: 3,
+    sample: (u) => ({ ry: -28 * Math.cos(2 * Math.PI * u) }),
+  },
+  {
+    id: "dollyReveal",
+    name: "Dolly Reveal",
+    desc: "Camera pulls back from a close-up to the full scene.",
+    dur: 2.5,
+    sample: (u) => ({
+      camPull: chan(u, [[0, 0.5, "out"], [1, 0]]),
+      camDy: chan(u, [[0, -0.04, "out"], [1, 0]]),
+      ry: chan(u, [[0, -18, "out"], [1, 0]]),
+    }),
+  },
+  {
+    id: "slideSettle",
+    name: "Slide & Settle",
+    desc: "Slides in from the left and eases to rest.",
+    dur: 2,
+    sample: (u) => ({
+      dx: chan(u, [[0, -0.3, "out"], [0.75, 0.01], [1, 0]]),
+      ry: chan(u, [[0, -40, "out"], [0.75, 4], [1, 0]]),
+    }),
+  },
+];
+
+function clipPreset(id) {
+  return CLIP_PRESETS.find((p) => p.id === id);
+}
+
+// ---- Offset math ----
+const _tlQa = new THREE.Quaternion();
+const _tlQb = new THREE.Quaternion();
+const _tlEuler = new THREE.Euler();
+const _lerp = (a, b, t, i) => a[i] + (b[i] - a[i]) * t;
+
+function offsetQuat(o) {
+  _tlEuler.set(
+    THREE.MathUtils.degToRad(o.rx || 0),
+    THREE.MathUtils.degToRad(o.ry || 0),
+    THREE.MathUtils.degToRad(o.rz || 0)
+  );
+  return new THREE.Quaternion().setFromEuler(_tlEuler);
+}
+
+// Sum the offsets of every animation clip covering device i at time t.
+function clipOffsetFor(i, t) {
+  let off = null;
+  for (const c of TL.clips) {
+    if (c.dev !== i || t < c.start || t > c.start + c.dur) continue;
+    const o = clipPreset(c.preset)?.sample(THREE.MathUtils.clamp((t - c.start) / c.dur, 0, 1));
+    if (!o) continue;
+    if (!off) off = { dx: 0, dy: 0, dz: 0, rx: 0, ry: 0, rz: 0, s: 1 };
+    off.dx += o.dx || 0; off.dy += o.dy || 0; off.dz += o.dz || 0;
+    off.rx += o.rx || 0; off.ry += o.ry || 0; off.rz += o.rz || 0;
+    off.s *= o.s ?? 1;
+  }
+  return off;
+}
+
+// Camera offsets come from every active clip regardless of device.
+function camOffsetAt(t) {
+  let pull = 0, dy = 0, any = false;
+  for (const c of TL.clips) {
+    if (t < c.start || t > c.start + c.dur) continue;
+    const o = clipPreset(c.preset)?.sample(THREE.MathUtils.clamp((t - c.start) / c.dur, 0, 1));
+    if (!o || (o.camPull == null && o.camDy == null)) continue;
+    any = true;
+    pull = 1 - (1 - pull) * (1 - (o.camPull || 0)); // compose pulls
+    dy += o.camDy || 0;
+  }
+  return any ? { pull: Math.min(0.95, pull), dy } : null;
+}
+
+// ---- Snapshots & poses ----
+// A snapshot is always of the BASE pose: when the playhead sits inside clips,
+// the current clip offsets are inverted out, so keyframes/rest never bake in
+// procedural motion.
+function tlBaseDeviceFromCurrent(i) {
+  const g = devices[i].group;
+  const t = TL ? TL.time : 0;
+  const o = TL && TL.clips.length ? clipOffsetFor(i, t) : null;
+  const pos = g.position.toArray();
+  let quat = g.quaternion.clone();
+  let scale = g.scale.toArray();
+  if (o) {
+    pos[0] -= o.dx; pos[1] -= o.dy; pos[2] -= o.dz;
+    if (o.rx || o.ry || o.rz) quat = offsetQuat(o).invert().multiply(quat);
+    if (o.s && o.s !== 1) scale = scale.map((v) => v / o.s);
+  }
+  return { pos, quat: quat.toArray(), scale };
+}
+
+function tlBaseCamFromCurrent() {
+  const t = TL ? TL.time : 0;
+  const o = TL && TL.clips.length ? camOffsetAt(t) : null;
+  const p = camera.position.clone();
+  if (o) {
+    if (o.dy) p.y -= o.dy;
+    if (o.pull) {
+      // p' = p + (T - p)·f  →  p = (p' - T·f) / (1 - f)
+      p.sub(controls.target.clone().multiplyScalar(o.pull)).divideScalar(1 - o.pull);
+    }
+  }
+  return { pos: p.toArray(), target: controls.target.toArray() };
+}
+
 function tlSnapshot() {
   return {
-    cam: { pos: camera.position.toArray(), target: controls.target.toArray() },
-    devices: devices.map((d) => ({
-      pos: d.group.position.toArray(),
-      quat: d.group.quaternion.toArray(),
-      scale: d.group.scale.toArray(),
-    })),
+    cam: tlBaseCamFromCurrent(),
+    devices: devices.map((d, i) => tlBaseDeviceFromCurrent(i)),
     bg: bgLayer.active && bgLayer.group
       ? { pos: bgLayer.group.position.toArray(), quat: bgLayer.group.quaternion.toArray() }
       : null,
@@ -2539,61 +2949,204 @@ function tlClone(o) {
   return JSON.parse(JSON.stringify(o));
 }
 
-const _tlQa = new THREE.Quaternion();
-const _tlQb = new THREE.Quaternion();
-const _lerp = (a, b, t, i) => a[i] + (b[i] - a[i]) * t;
-
-// Apply the interpolated scene state for normalized time u.
-function tlApplyU(u) {
-  const k = TL.keyframes;
-  if (!k.length) return;
-  let a = k[0], b = k[0], t = 0;
-  if (u >= k[k.length - 1].u) {
-    a = b = k[k.length - 1]; // hold the last pose past the final keyframe
-  } else if (u > k[0].u) {
-    for (let i = 0; i < k.length - 1; i++) {
-      if (u >= k[i].u && u <= k[i + 1].u) {
-        a = k[i];
-        b = k[i + 1];
-        const span = Math.max(1e-6, b.u - a.u);
-        t = (TL_EASE[a.easing] || TL_EASE.ease)((u - a.u) / span);
-        break;
-      }
-    }
-  }
-  camera.position.set(
-    _lerp(a.cam.pos, b.cam.pos, t, 0),
-    _lerp(a.cam.pos, b.cam.pos, t, 1),
-    _lerp(a.cam.pos, b.cam.pos, t, 2)
-  );
-  controls.target.set(
-    _lerp(a.cam.target, b.cam.target, t, 0),
-    _lerp(a.cam.target, b.cam.target, t, 1),
-    _lerp(a.cam.target, b.cam.target, t, 2)
-  );
+// Apply an exact snapshot pose (no interpolation, no UI side effects).
+function tlPose(s) {
+  if (!s) return;
+  camera.position.fromArray(s.cam.pos);
+  controls.target.fromArray(s.cam.target);
   camera.lookAt(controls.target);
-  const n = Math.min(devices.length, a.devices.length, b.devices.length);
+  const n = Math.min(devices.length, s.devices.length);
   for (let i = 0; i < n; i++) {
     const g = devices[i].group;
-    const da = a.devices[i];
-    const db = b.devices[i];
-    g.position.set(_lerp(da.pos, db.pos, t, 0), _lerp(da.pos, db.pos, t, 1), _lerp(da.pos, db.pos, t, 2));
-    _tlQa.fromArray(da.quat);
-    _tlQb.fromArray(db.quat);
-    g.quaternion.copy(_tlQa.slerp(_tlQb, t));
-    g.scale.set(_lerp(da.scale, db.scale, t, 0), _lerp(da.scale, db.scale, t, 1), _lerp(da.scale, db.scale, t, 2));
+    g.position.fromArray(s.devices[i].pos);
+    g.quaternion.fromArray(s.devices[i].quat);
+    g.scale.fromArray(s.devices[i].scale);
   }
-  if (a.bg && b.bg && bgLayer.active && bgLayer.group) {
-    const g = bgLayer.group;
-    g.position.set(_lerp(a.bg.pos, b.bg.pos, t, 0), _lerp(a.bg.pos, b.bg.pos, t, 1), _lerp(a.bg.pos, b.bg.pos, t, 2));
-    _tlQa.fromArray(a.bg.quat);
-    _tlQb.fromArray(b.bg.quat);
-    g.quaternion.copy(_tlQa.slerp(_tlQb, t));
+  if (s.bg && bgLayer.active && bgLayer.group) {
+    bgLayer.group.position.fromArray(s.bg.pos);
+    bgLayer.group.quaternion.fromArray(s.bg.quat);
+  }
+}
+
+function tlApplySnap(s) {
+  tlPose(s);
+  refreshTransformSliders();
+  render();
+}
+
+// Remember the untouched pose once, so clearing the timeline can restore it.
+function tlCaptureRest(snap) {
+  if (!TL.keyframes.length && !TL.clips.length && !TL.screenClips.length && !TL.rest) {
+    TL.rest = tlClone(snap || tlSnapshot());
+  }
+}
+
+// The timeline just became empty — restore and drop the remembered pose.
+function tlRestoreRest() {
+  tlApplySnap(TL.rest);
+  TL.rest = null;
+}
+
+// Manual pose edits (gizmo, sliders, reset) while paused re-anchor the base
+// pose, so the user can still re-pose a scene that has clips on it. With
+// manual keyframes the keyframes own the base instead.
+function tlRebaseRest() {
+  if (!TL || TL.playing || !TL.rest || TL.keyframes.length >= 2) return;
+  if (!TL.clips.length && !TL.screenClips.length) return;
+  TL.rest = tlClone(tlSnapshot());
+}
+controls.addEventListener("end", () => tlRebaseRest());
+
+// =====================================================================
+// Engine — compose base pose + clip offsets + screen clips at time u·duration
+// =====================================================================
+function tlApplyU(u) {
+  u = THREE.MathUtils.clamp(u, 0, 1);
+  const t = u * TL.duration;
+  const k = TL.keyframes;
+
+  // 1) Base pose.
+  if (k.length >= 1) {
+    let a = k[0], b = k[0], tt = 0;
+    if (u >= k[k.length - 1].u) {
+      a = b = k[k.length - 1]; // hold the last pose past the final keyframe
+    } else if (u > k[0].u) {
+      for (let i = 0; i < k.length - 1; i++) {
+        if (u >= k[i].u && u <= k[i + 1].u) {
+          a = k[i];
+          b = k[i + 1];
+          const span = Math.max(1e-6, b.u - a.u);
+          tt = (EASE_FN[a.easing] || EASE_FN.ease)((u - a.u) / span);
+          break;
+        }
+      }
+    }
+    camera.position.set(
+      _lerp(a.cam.pos, b.cam.pos, tt, 0),
+      _lerp(a.cam.pos, b.cam.pos, tt, 1),
+      _lerp(a.cam.pos, b.cam.pos, tt, 2)
+    );
+    controls.target.set(
+      _lerp(a.cam.target, b.cam.target, tt, 0),
+      _lerp(a.cam.target, b.cam.target, tt, 1),
+      _lerp(a.cam.target, b.cam.target, tt, 2)
+    );
+    camera.lookAt(controls.target);
+    const n = Math.min(devices.length, a.devices.length, b.devices.length);
+    for (let i = 0; i < n; i++) {
+      const g = devices[i].group;
+      const da = a.devices[i];
+      const db = b.devices[i];
+      g.position.set(_lerp(da.pos, db.pos, tt, 0), _lerp(da.pos, db.pos, tt, 1), _lerp(da.pos, db.pos, tt, 2));
+      _tlQa.fromArray(da.quat);
+      _tlQb.fromArray(db.quat);
+      g.quaternion.copy(_tlQa.slerp(_tlQb, tt));
+      g.scale.set(_lerp(da.scale, db.scale, tt, 0), _lerp(da.scale, db.scale, tt, 1), _lerp(da.scale, db.scale, tt, 2));
+    }
+    if (a.bg && b.bg && bgLayer.active && bgLayer.group) {
+      const g = bgLayer.group;
+      g.position.set(_lerp(a.bg.pos, b.bg.pos, tt, 0), _lerp(a.bg.pos, b.bg.pos, tt, 1), _lerp(a.bg.pos, b.bg.pos, tt, 2));
+      _tlQa.fromArray(a.bg.quat);
+      _tlQb.fromArray(b.bg.quat);
+      g.quaternion.copy(_tlQa.slerp(_tlQb, tt));
+    }
+  } else if (TL.rest && (TL.clips.length || TL.screenClips.length)) {
+    tlPose(TL.rest);
+  }
+
+  // 2) Animation clip offsets on top of the base.
+  if (TL.clips.length) {
+    for (let i = 0; i < devices.length; i++) {
+      const o = clipOffsetFor(i, t);
+      if (!o) continue;
+      const g = devices[i].group;
+      g.position.x += o.dx;
+      g.position.y += o.dy;
+      g.position.z += o.dz;
+      if (o.rx || o.ry || o.rz) g.quaternion.premultiply(offsetQuat(o));
+      if (o.s !== 1) g.scale.multiplyScalar(o.s);
+    }
+    const co = camOffsetAt(t);
+    if (co) {
+      if (co.pull) camera.position.lerp(controls.target, co.pull);
+      if (co.dy) camera.position.y += co.dy;
+      camera.lookAt(controls.target);
+    }
+  }
+
+  // 3) Screen clips.
+  tlApplyScreens(t);
+
+  render();
+}
+
+// =====================================================================
+// Screen clips — swap the device screen while inside a media clip
+// =====================================================================
+function tlCaptureBaseScreen(dev) {
+  if (dev._baseScreen) return;
+  dev._baseScreen = dev.screenIsVideo && dev.screenVideoAsset
+    ? { kind: "video", asset: dev.screenVideoAsset }
+    : dev.screenBlob
+      ? { kind: "image", blob: dev.screenBlob }
+      : { kind: "none" };
+}
+
+function tlRestoreBaseScreen(dev) {
+  const b = dev._baseScreen;
+  if (!b) return;
+  if (b.kind === "video") applyScreenVideoToDevice(dev, b.asset);
+  else if (b.kind === "image") applyScreenBlobToDevice(dev, b.blob);
+  else if (dev.defaultScreenMaps) {
+    stopDeviceVideo(dev);
+    configureEmissiveScreen(dev.screenMaterial, dev.defaultScreenMaps.emissiveMap || dev.defaultScreenMaps.map);
+    dev.uploadedTexture = null;
+    dev.screenBlob = null;
   }
   render();
 }
 
-// ---- Keyframe CRUD ----
+function tlApplyScreens(t) {
+  if (!TL.screenClips.length) {
+    return;
+  }
+  devices.forEach((dev, i) => {
+    let clip = null;
+    for (const c of TL.screenClips) {
+      if (c.dev === i && t >= c.start && t < c.start + c.dur) clip = c; // last wins
+    }
+    const want = clip ? clip.id : null;
+    if (dev._screenClipId !== want) {
+      dev._screenClipId = want;
+      if (clip) {
+        tlCaptureBaseScreen(dev);
+        if (clip.asset.type === "video") applyScreenVideoToDevice(dev, clip.asset);
+        else if (clip.asset.blob) applyScreenBlobToDevice(dev, clip.asset.blob);
+      } else if (dev._baseScreen) {
+        tlRestoreBaseScreen(dev);
+      }
+    }
+    // Keep an active video clip locked to the playhead.
+    if (clip && clip.asset.type === "video" && dev.screenVideo && dev.screenVideo.readyState >= 1) {
+      const tr = clip.asset.trim;
+      const s0 = tr?.start ?? 0;
+      const end = tr?.end ?? dev.screenVideo.duration ?? Infinity;
+      const span = Math.max(0.01, end - s0);
+      const wantT = s0 + ((t - clip.start) % span);
+      if (!TL.playing && !exporting) {
+        if (Math.abs(dev.screenVideo.currentTime - wantT) > 0.08) dev.screenVideo.currentTime = wantT;
+        if (!dev.screenVideo.paused) dev.screenVideo.pause();
+      } else if (dev.screenVideo.paused) {
+        dev.screenVideo.currentTime = wantT;
+        dev.screenVideo.play().catch(() => {});
+      }
+    }
+  });
+}
+
+// =====================================================================
+// Keyframe CRUD
+// =====================================================================
 function tlSort() {
   TL.keyframes.sort((x, y) => x.u - y.u);
 }
@@ -2611,6 +3164,7 @@ function tlAddOrUpdateKey() {
     TL.selected = near;
     setStatus(`Keyframe updated at ${(near.u * TL.duration).toFixed(2)}s.`);
   } else {
+    tlCaptureRest();
     const kf = { u, easing: "ease", ...tlSnapshot() };
     TL.keyframes.push(kf);
     tlSort();
@@ -2620,7 +3174,9 @@ function tlAddOrUpdateKey() {
   tlRefresh();
 }
 
-// ---- UI sync ----
+// =====================================================================
+// UI sync
+// =====================================================================
 function tlFmtClock(t) {
   const m = Math.floor(t / 60);
   const s = t - m * 60;
@@ -2631,6 +3187,17 @@ function tlSyncUI() {
   tlPlayheadEl.style.left = (THREE.MathUtils.clamp(TL.time / TL.duration, 0, 1) * 100) + "%";
   $("tlCurrent").textContent = tlFmtClock(TL.time);
   $("tlTotal").textContent = tlFmtClock(TL.duration);
+  // Keep the playhead visible while playing zoomed-in.
+  if (TL.playing && TL.zoom > 1) {
+    const px = (TL.time / TL.duration) * tlContentEl.clientWidth;
+    if (px < tlScrollEl.scrollLeft + 30 || px > tlScrollEl.scrollLeft + tlScrollEl.clientWidth - 30) {
+      tlScrollEl.scrollLeft = px - tlScrollEl.clientWidth * 0.25;
+    }
+  }
+}
+
+function tlTimelineEmpty() {
+  return !TL.keyframes.length && !TL.clips.length && !TL.screenClips.length;
 }
 
 // Rebuild keyframe markers + dependent chrome (empty state, key tools, labels).
@@ -2644,16 +3211,17 @@ function tlRefresh() {
     el.title = `Keyframe — ${(kf.u * TL.duration).toFixed(2)}s`;
     tlTrack.appendChild(el);
   });
-  $("tlEmpty").hidden = TL.keyframes.length > 0;
-  $("tlClear").hidden = TL.keyframes.length === 0;
+  $("tlEmpty").hidden = !tlTimelineEmpty();
+  $("tlClear").hidden = tlTimelineEmpty();
   $("tlKeyTools").hidden = !TL.selected;
   if (TL.selected) $("tlEasing").value = TL.selected.easing;
   $("tlAddKeyLabel").textContent =
     tlFindNear(THREE.MathUtils.clamp(TL.time / TL.duration, 0, 1)) ? "Update keyframe" : "Add keyframe";
   updateSaveButtonLabel();
+  tlRenderLane();
 }
 
-// Reposition markers from data without rebuilding (used mid-drag, no resort).
+// Reposition keyframe markers from data without rebuilding (mid-drag).
 function tlLayoutKeys() {
   tlTrack.querySelectorAll(".tl-key").forEach((el) => {
     const kf = TL.keyframes[+el.dataset.i];
@@ -2670,10 +3238,12 @@ function tlSeek(u) {
   if (!TL.playing) refreshTransformSliders();
 }
 
-// ---- Playback ----
+// =====================================================================
+// Playback
+// =====================================================================
 function tlPlayStart() {
-  if (TL.keyframes.length < 2) {
-    setStatus("Add at least two keyframes — or pick an Animate preset — to play.");
+  if (!animActive()) {
+    setStatus("Add an animation clip or two keyframes first — try the Add animation menu.");
     return;
   }
   if (!TL.loop && TL.time >= TL.duration - 1e-3) TL.time = 0; // replay from start
@@ -2723,12 +3293,15 @@ function tlTick() {
   if (!TL.loop && t >= TL.duration) tlPause();
 }
 
-// ---- Ruler ----
+// =====================================================================
+// Ruler & zoom
+// =====================================================================
 function tlRenderRuler() {
   tlRulerEl.innerHTML = "";
   const dur = TL.duration;
-  const steps = [0.5, 1, 2, 5, 10, 15, 30];
-  const major = steps.find((s) => dur / s <= 10) || 30;
+  const visible = dur / TL.zoom; // seconds across one viewport width
+  const steps = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30];
+  const major = steps.find((s) => visible / s <= 10) || 30;
   const minor = major / 5;
   const n = Math.floor(dur / minor + 1e-6);
   for (let i = 0; i <= n; i++) {
@@ -2742,20 +3315,349 @@ function tlRenderRuler() {
       const lab = document.createElement("span");
       lab.className = "tl-tick-label";
       lab.style.left = (t / dur * 100) + "%";
-      lab.textContent = `${Math.round(t * 10) / 10}s`;
+      lab.textContent = `${Math.round(t * 100) / 100}s`;
       tlRulerEl.appendChild(lab);
     }
   }
 }
 
-// ---- Track & ruler scrubbing, keyframe dragging ----
+function tlSetZoom(z) {
+  TL.zoom = THREE.MathUtils.clamp(z, 1, 8);
+  $("tlZoomLabel").textContent = `${Math.round(TL.zoom * 10) / 10}×`;
+  tlContentEl.style.width = (TL.zoom * 100) + "%";
+  tlRenderRuler();
+  // Re-center the view on the playhead ("look closely at where my scrubber is").
+  const px = (TL.time / TL.duration) * tlContentEl.clientWidth;
+  tlScrollEl.scrollLeft = px - tlScrollEl.clientWidth / 2;
+}
+
+$("tlZoomIn").addEventListener("click", () => tlSetZoom(TL.zoom * 1.5));
+$("tlZoomOut").addEventListener("click", () => tlSetZoom(TL.zoom / 1.5));
+$("tlSnap").addEventListener("click", () => {
+  TL.snap = !TL.snap;
+  $("tlSnap").classList.toggle("active", TL.snap);
+  setStatus(TL.snap ? "Snapping on — clips snap to ¼/½/1-second grid." : "Snapping off — free clip placement.");
+});
+tlScrollEl.addEventListener("wheel", (e) => {
+  if (!e.ctrlKey && !e.metaKey) return;
+  e.preventDefault();
+  tlSetZoom(TL.zoom * (e.deltaY < 0 ? 1.2 : 1 / 1.2));
+}, { passive: false });
+
+// =====================================================================
+// Clip lanes — render + drag/resize/select
+// =====================================================================
+function tlActiveDevIndex() {
+  return Math.max(0, devices.indexOf(activeDevice));
+}
+
+function tlSyncLaneTabs() {
+  $("laneTabAnim").classList.toggle("active", TL.lane === "anim");
+  $("laneTabScreen").classList.toggle("active", TL.lane === "screen");
+  $("laneAddLabel").textContent = TL.lane === "anim" ? "Add animation" : "Add media";
+}
+
+function tlRenderLane() {
+  tlLaneEl.querySelectorAll(".tl-clip, .tl-lane-empty").forEach((el) => el.remove());
+  const i = tlActiveDevIndex();
+  $("laneDevLabel").textContent = activeDevice ? `${activeDevice.type.name} ${activeDevice.typeCount}` : "";
+  const list = TL.lane === "anim" ? TL.clips : TL.screenClips;
+  const items = list.filter((c) => c.dev === i);
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "tl-lane-empty";
+    empty.textContent = TL.lane === "anim"
+      ? "No animations on this device — use “Add animation”."
+      : "No screen media sequenced — use “Add media”.";
+    tlLaneEl.appendChild(empty);
+    return;
+  }
+  for (const c of items) {
+    const el = document.createElement("div");
+    el.className = "tl-clip" + (TL.lane === "screen" ? " media" : "") + (c === TL.selClip ? " selected" : "");
+    el.style.left = (c.start / TL.duration * 100) + "%";
+    el.style.width = (c.dur / TL.duration * 100) + "%";
+    el.dataset.id = c.id;
+    if (TL.lane === "anim") {
+      const p = clipPreset(c.preset);
+      el.title = `${p?.name || c.preset} — ${c.start.toFixed(2)}s for ${c.dur.toFixed(2)}s`;
+      el.innerHTML = '<svg class="i"><use href="#i-zap"/></svg>';
+      const label = document.createElement("span");
+      label.textContent = p?.name || c.preset;
+      el.appendChild(label);
+    } else {
+      el.title = `${c.asset.name || "media"} — ${c.start.toFixed(2)}s for ${c.dur.toFixed(2)}s`;
+      if (c.asset.type === "image") {
+        const img = document.createElement("img");
+        img.src = c.asset.url;
+        el.appendChild(img);
+      }
+      const label = document.createElement("span");
+      label.className = "clip-label";
+      label.innerHTML = c.asset.type === "video" ? '<svg class="i"><use href="#i-play"/></svg>' : "";
+      label.appendChild(document.createTextNode(c.asset.name || "media"));
+      el.appendChild(label);
+    }
+    const x = document.createElement("button");
+    x.className = "x";
+    x.textContent = "×";
+    x.title = "Remove clip";
+    x.addEventListener("click", (e) => {
+      e.stopPropagation();
+      tlRemoveClip(c);
+    });
+    el.appendChild(x);
+    for (const side of ["l", "r"]) {
+      const h = document.createElement("span");
+      h.className = `h ${side}`;
+      el.appendChild(h);
+    }
+    tlLaneEl.appendChild(el);
+  }
+}
+
+function tlLayoutClips() {
+  tlLaneEl.querySelectorAll(".tl-clip").forEach((el) => {
+    const list = TL.lane === "anim" ? TL.clips : TL.screenClips;
+    const c = list.find((x) => x.id === +el.dataset.id);
+    if (!c) return;
+    el.style.left = (c.start / TL.duration * 100) + "%";
+    el.style.width = (c.dur / TL.duration * 100) + "%";
+  });
+}
+
+function tlSelectClip(c) {
+  TL.selClip = c;
+  tlLaneEl.querySelectorAll(".tl-clip").forEach((el) => {
+    el.classList.toggle("selected", !!c && +el.dataset.id === c.id);
+  });
+}
+
+function tlRemoveClip(c) {
+  TL.clips = TL.clips.filter((x) => x !== c);
+  const wasScreen = TL.screenClips.includes(c);
+  TL.screenClips = TL.screenClips.filter((x) => x !== c);
+  if (TL.selClip === c) TL.selClip = null;
+  if (wasScreen) {
+    // Force a screen re-evaluation so a removed active clip reverts the screen.
+    devices.forEach((d) => { if (d._screenClipId === c.id) d._screenClipId = undefined; });
+    if (!TL.screenClips.length) devices.forEach((d) => { if (d._baseScreen) { tlRestoreBaseScreen(d); d._baseScreen = null; d._screenClipId = undefined; } });
+  }
+  if (tlTimelineEmpty()) tlRestoreRest();
+  else tlApplyU(TL.time / TL.duration);
+  tlRefresh();
+  setStatus("Clip removed.");
+}
+
+function tlDeleteSelection() {
+  if (!TL) return;
+  if (TL.selClip) tlRemoveClip(TL.selClip);
+  else if (TL.selected) {
+    TL.keyframes = TL.keyframes.filter((k) => k !== TL.selected);
+    TL.selected = null;
+    if (tlTimelineEmpty()) tlRestoreRest();
+    tlRefresh();
+    setStatus("Keyframe deleted.");
+  }
+}
+
+// Grow the timeline so every clip fits; never shrink automatically.
+function tlFitDuration() {
+  let end = 0;
+  for (const c of [...TL.clips, ...TL.screenClips]) end = Math.max(end, c.start + c.dur);
+  if (end > TL.duration + 1e-6) {
+    TL.duration = Math.ceil(end * 2) / 2;
+    $("tlDuration").value = TL.duration;
+    tlRenderRuler();
+  }
+}
+
+// Default placement: at the playhead if that slot is free for this device,
+// otherwise appended right after the device's last clip (easy sequencing).
+function tlPlaceStart(list, devIndex, dur) {
+  let start = Math.max(0, TL.time);
+  const mine = list.filter((c) => c.dev === devIndex);
+  const overlaps = mine.some((c) => start < c.start + c.dur && start + dur > c.start);
+  if (overlaps) start = Math.max(...mine.map((c) => c.start + c.dur));
+  return Math.round(start * 100) / 100;
+}
+
+function tlAddClip(preset) {
+  if (!activeDevice) return;
+  tlCaptureRest();
+  const i = tlActiveDevIndex();
+  const start = tlPlaceStart(TL.clips, i, preset.dur);
+  const clip = { id: ++_tlClipSeq, dev: i, preset: preset.id, start, dur: preset.dur };
+  TL.clips.push(clip);
+  tlFitDuration();
+  TL.lane = "anim";
+  tlSyncLaneTabs();
+  tlSelectClip(clip);
+  tlRefresh();
+  tlSeek(start / TL.duration);
+  setStatus(`${preset.name} added to ${activeDevice.type.name} ${activeDevice.typeCount}.`);
+  tlPlayStart(); // instant feedback
+}
+
+async function tlAddScreenClip(asset) {
+  if (!activeDevice) return;
+  tlCaptureRest();
+  tlCaptureBaseScreen(activeDevice);
+  if (asset.type === "image") {
+    try { await getAssetBlob(asset); } catch { setStatus("Couldn't load that asset."); return; }
+  }
+  const i = tlActiveDevIndex();
+  const dur = asset.type === "video"
+    ? Math.max(0.5, ((asset.trim?.end ?? 0) - (asset.trim?.start ?? 0)) || 3)
+    : 2;
+  const start = tlPlaceStart(TL.screenClips, i, dur);
+  const clip = { id: ++_tlClipSeq, dev: i, asset, start, dur };
+  TL.screenClips.push(clip);
+  tlFitDuration();
+  TL.lane = "screen";
+  tlSyncLaneTabs();
+  tlSelectClip(clip);
+  tlRefresh();
+  tlSeek(start / TL.duration); // shows the media on the device immediately
+  setStatus(`${asset.name || "Media"} sequenced on ${activeDevice.type.name} ${activeDevice.typeCount}.`);
+}
+
+// ---- Lane pointer interactions: select, move, resize, scrub ----
 function tlPointerU(e) {
   const r = tlTrack.getBoundingClientRect();
   return THREE.MathUtils.clamp((e.clientX - r.left) / r.width, 0, 1);
 }
+function tlPointerT(e) {
+  return tlPointerU(e) * TL.duration;
+}
 
+// Snap a dragged clip edge/position to a time.
+//  - Snap ON  (TL.snap): hard-snap to the ¼ / ½ / 1-second grid, AND magnetically
+//    to 0, the playhead and neighbouring clip edges (whichever is closest).
+//  - Snap OFF: free movement on a fine 0.05s grid, no magnets.
+function tlSnapT(t, list, self) {
+  if (!TL.snap) return Math.max(0, Math.round(t * 20) / 20);
+  const pxPerSec = tlTrack.getBoundingClientRect().width / TL.duration;
+  const tol = 8 / Math.max(1, pxPerSec); // magnet pull radius, in seconds
+  // Candidate snap targets: the quarter-second grid line nearest t, plus magnets.
+  const candidates = [Math.round(t * 4) / 4, 0, TL.time];
+  for (const c of list) {
+    if (c === self) continue;
+    candidates.push(c.start, c.start + c.dur);
+  }
+  // Pick the closest candidate within tolerance; grid lines always qualify.
+  let best = Math.round(t * 4) / 4, bestD = Math.abs(t - best);
+  for (const m of candidates) {
+    const d = Math.abs(t - m);
+    if (d < bestD && (d < tol || m === best)) { best = m; bestD = d; }
+  }
+  return Math.max(0, best);
+}
+
+let _laneDrag = null; // { c, mode: "move"|"l"|"r", t0, start0, dur0, moved }
+let _laneScrub = false;
+
+tlLaneEl.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  tlPause();
+  const clipEl = e.target.closest(".tl-clip");
+  if (clipEl) {
+    const list = TL.lane === "anim" ? TL.clips : TL.screenClips;
+    const c = list.find((x) => x.id === +clipEl.dataset.id);
+    if (!c) return;
+    const mode = e.target.classList.contains("h") ? (e.target.classList.contains("l") ? "l" : "r") : "move";
+    _laneDrag = { c, list, mode, t0: tlPointerT(e), start0: c.start, dur0: c.dur, moved: false };
+    tlSelectClip(c);
+  } else {
+    _laneDrag = null;
+    _laneScrub = true;
+    tlSelectClip(null);
+    tlSeek(tlPointerU(e)); // empty lane space scrubs like the track
+  }
+  try { tlLaneEl.setPointerCapture(e.pointerId); } catch {}
+});
+
+tlLaneEl.addEventListener("pointermove", (e) => {
+  if (!_laneDrag) {
+    if (_laneScrub) tlSeek(tlPointerU(e));
+    return;
+  }
+  const d = _laneDrag;
+  const dt = tlPointerT(e) - d.t0;
+  if (Math.abs(dt) > 0.005) d.moved = true;
+  if (d.mode === "move") {
+    d.c.start = tlSnapT(Math.max(0, d.start0 + dt), d.list, d.c);
+  } else if (d.mode === "l") {
+    const newStart = tlSnapT(THREE.MathUtils.clamp(d.start0 + dt, 0, d.start0 + d.dur0 - 0.2), d.list, d.c);
+    d.c.dur = d.dur0 + (d.start0 - newStart);
+    d.c.start = newStart;
+  } else {
+    const end = tlSnapT(Math.max(d.start0 + 0.2, d.start0 + d.dur0 + dt), d.list, d.c);
+    d.c.dur = end - d.c.start;
+  }
+  tlLayoutClips();
+});
+
+function laneDragEnd() {
+  _laneScrub = false;
+  if (!_laneDrag) return;
+  const d = _laneDrag;
+  _laneDrag = null;
+  if (d.moved) {
+    tlFitDuration();
+    tlRefresh();
+    tlApplyU(TL.time / TL.duration);
+    setStatus(`Clip: ${d.c.start.toFixed(2)}s → ${(d.c.start + d.c.dur).toFixed(2)}s.`);
+  }
+}
+tlLaneEl.addEventListener("pointerup", laneDragEnd);
+tlLaneEl.addEventListener("pointercancel", laneDragEnd);
+
+// Lane tabs + contextual add button.
+$("laneTabAnim").addEventListener("click", () => {
+  TL.lane = "anim";
+  TL.selClip = null;
+  tlSyncLaneTabs();
+  tlRenderLane();
+});
+$("laneTabScreen").addEventListener("click", () => {
+  TL.lane = "screen";
+  TL.selClip = null;
+  tlSyncLaneTabs();
+  tlRenderLane();
+});
+$("laneAdd").addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (TL.lane === "anim") tlPresetsMenu.hidden = !tlPresetsMenu.hidden;
+  else openAssetModal("screenClip");
+});
+document.addEventListener("click", (e) => {
+  if (!tlPresetsMenu.hidden && !e.target.closest(".tl-presets-wrap")) tlPresetsMenu.hidden = true;
+});
+
+for (const p of CLIP_PRESETS) {
+  const b = document.createElement("button");
+  b.className = "tl-preset-item";
+  const nm = document.createElement("span");
+  nm.className = "tl-preset-name";
+  nm.textContent = p.name;
+  const ds = document.createElement("span");
+  ds.className = "tl-preset-desc";
+  ds.textContent = `${p.desc} (${p.dur}s)`;
+  b.append(nm, ds);
+  b.addEventListener("click", () => {
+    tlPresetsMenu.hidden = true;
+    tlAddClip(p);
+  });
+  tlPresetsMenu.appendChild(b);
+}
+
+// =====================================================================
+// Track & ruler scrubbing, keyframe dragging
+// =====================================================================
 let _tlDragKey = null;
 let _tlDragMoved = false;
+let _trackScrub = false;
 
 tlTrack.addEventListener("pointerdown", (e) => {
   e.preventDefault();
@@ -2768,46 +3670,55 @@ tlTrack.addEventListener("pointerdown", (e) => {
     tlRefresh();
   } else {
     _tlDragKey = null;
+    _trackScrub = true;
     if (TL.selected) {
       TL.selected = null;
       tlRefresh();
     }
     tlSeek(tlPointerU(e));
   }
-  tlTrack.setPointerCapture(e.pointerId);
+  try { tlTrack.setPointerCapture(e.pointerId); } catch {}
 });
 
 tlTrack.addEventListener("pointermove", (e) => {
-  if (!tlTrack.hasPointerCapture?.(e.pointerId)) return;
   if (_tlDragKey) {
     _tlDragMoved = true;
     _tlDragKey.u = tlPointerU(e);
     tlLayoutKeys();
-  } else {
+  } else if (_trackScrub) {
     tlSeek(tlPointerU(e));
   }
 });
 
-tlTrack.addEventListener("pointerup", () => {
+function trackDragEnd() {
+  _trackScrub = false;
   if (!_tlDragKey) return;
   tlSort();
   tlSeek(_tlDragKey.u); // click selects + jumps; drag lands the playhead on it
   if (_tlDragMoved) setStatus(`Keyframe moved to ${(_tlDragKey.u * TL.duration).toFixed(2)}s.`);
   _tlDragKey = null;
   tlRefresh();
-});
+}
+tlTrack.addEventListener("pointerup", trackDragEnd);
+tlTrack.addEventListener("pointercancel", trackDragEnd);
 
+let _rulerScrub = false;
 tlRulerEl.addEventListener("pointerdown", (e) => {
   e.preventDefault();
   tlPause();
-  tlRulerEl.setPointerCapture(e.pointerId);
+  _rulerScrub = true;
+  try { tlRulerEl.setPointerCapture(e.pointerId); } catch {}
   tlSeek(tlPointerU(e));
 });
 tlRulerEl.addEventListener("pointermove", (e) => {
-  if (tlRulerEl.hasPointerCapture?.(e.pointerId)) tlSeek(tlPointerU(e));
+  if (_rulerScrub) tlSeek(tlPointerU(e));
 });
+tlRulerEl.addEventListener("pointerup", () => { _rulerScrub = false; });
+tlRulerEl.addEventListener("pointercancel", () => { _rulerScrub = false; });
 
-// ---- Transport & toolbar ----
+// =====================================================================
+// Transport & toolbar
+// =====================================================================
 tlPlayBtn.addEventListener("click", tlTogglePlay);
 $("tlSkipStart").addEventListener("click", () => {
   tlPause();
@@ -2825,187 +3736,82 @@ $("tlDeleteKey").addEventListener("click", () => {
   if (!TL.selected) return;
   TL.keyframes = TL.keyframes.filter((k) => k !== TL.selected);
   TL.selected = null;
+  if (tlTimelineEmpty()) tlRestoreRest();
   tlRefresh();
   setStatus("Keyframe deleted.");
 });
 $("tlClear").addEventListener("click", () => {
   tlPause();
   TL.keyframes = [];
+  TL.clips = [];
+  TL.screenClips = [];
   TL.selected = null;
+  TL.selClip = null;
+  devices.forEach((d) => {
+    if (d._baseScreen) {
+      tlRestoreBaseScreen(d);
+      d._baseScreen = null;
+    }
+    d._screenClipId = undefined;
+  });
+  tlRestoreRest();
+  tlSetZoom(1);
   tlRefresh();
-  setStatus("Cleared all keyframes.");
+  setStatus("Cleared timeline — scene restored to its original pose.");
 });
 $("tlEasing").addEventListener("change", (e) => {
   if (TL.selected) TL.selected.easing = e.target.value;
 });
 $("tlDuration").addEventListener("change", (e) => {
   tlPause();
-  const v = THREE.MathUtils.clamp(parseFloat(e.target.value) || 5, 1, 60);
+  let v = THREE.MathUtils.clamp(parseFloat(e.target.value) || 5, 1, 60);
+  // Never cut clips off the end: clips keep absolute times.
+  let clipEnd = 0;
+  for (const c of [...TL.clips, ...TL.screenClips]) clipEnd = Math.max(clipEnd, c.start + c.dur);
+  v = Math.max(v, Math.ceil(clipEnd * 2) / 2);
   e.target.value = v;
   const u = TL.time / TL.duration;
   TL.duration = v;
   TL.time = u * v; // keyframes are normalized, so they stretch with duration
   tlRenderRuler();
   tlSyncUI();
+  tlRenderLane();
 });
 
-// ---- Animation presets ----
-// Each preset builds keyframes around the CURRENT pose (the snapshot S), so it
-// composes with however the scene is already arranged.
-function _devMod(d, { dx = 0, dy = 0, dz = 0, rx = 0, ry = 0, rz = 0, s = 1 } = {}) {
-  const q = new THREE.Quaternion().fromArray(d.quat);
-  const off = new THREE.Quaternion().setFromEuler(new THREE.Euler(
-    THREE.MathUtils.degToRad(rx),
-    THREE.MathUtils.degToRad(ry),
-    THREE.MathUtils.degToRad(rz)
-  ));
-  return {
-    pos: [d.pos[0] + dx, d.pos[1] + dy, d.pos[2] + dz],
-    quat: off.multiply(q).toArray(), // world-frame rotation offset
-    scale: d.scale.map((v) => v * s),
-  };
-}
-
-// Clone the base snapshot into a keyframe at u, optionally remapping devices.
-function _kf(S, u, easing, mod) {
-  const k = tlClone(S);
-  k.u = u;
-  k.easing = easing;
-  if (mod) k.devices = S.devices.map((d, i) => mod(d, i));
-  return k;
-}
-
-// Camera position pulled toward the target by factor f (0..1), nudged in y.
-function _camPulled(S, f, dy = 0) {
-  const p = S.cam.pos, t = S.cam.target;
-  return [p[0] + (t[0] - p[0]) * f, p[1] + (t[1] - p[1]) * f + dy, p[2] + (t[2] - p[2]) * f];
-}
-
-const ANIM_PRESETS = [
-  {
-    name: "Hero Orbit",
-    desc: "Full 360° turntable spin — loops seamlessly.",
-    loop: true,
-    build: (S) => [0, 90, 180, 270, 360].map((deg, i) =>
-      _kf(S, i / 4, "linear", (d) => _devMod(d, { ry: deg }))),
-  },
-  {
-    name: "Showcase Sweep",
-    desc: "Gentle side-to-side turn, like a product hero shot.",
-    loop: true,
-    build: (S) => [
-      _kf(S, 0, "ease", (d) => _devMod(d, { ry: -24, rx: 4 })),
-      _kf(S, 0.5, "ease", (d) => _devMod(d, { ry: 24, rx: 4 })),
-      _kf(S, 1, "ease", (d) => _devMod(d, { ry: -24, rx: 4 })),
-    ],
-  },
-  {
-    name: "Pop In",
-    desc: "Rises from below and settles with a soft overshoot.",
-    loop: false,
-    build: (S) => [
-      _kf(S, 0, "ease-out", (d) => _devMod(d, { dy: -0.3, ry: -28, s: 0.7 })),
-      _kf(S, 0.7, "ease", (d) => _devMod(d, { dy: 0.012, ry: 3, s: 1.02 })),
-      _kf(S, 1, "ease", (d) => _devMod(d)),
-    ],
-  },
-  {
-    name: "Float",
-    desc: "Weightless hover with a hint of tilt — loops.",
-    loop: true,
-    build: (S) => [
-      _kf(S, 0, "ease", (d) => _devMod(d)),
-      _kf(S, 0.25, "ease", (d) => _devMod(d, { dy: 0.012, rz: 1.4 })),
-      _kf(S, 0.5, "ease", (d) => _devMod(d)),
-      _kf(S, 0.75, "ease", (d) => _devMod(d, { dy: -0.012, rz: -1.4 })),
-      _kf(S, 1, "ease", (d) => _devMod(d)),
-    ],
-  },
-  {
-    name: "Swing",
-    desc: "Pendulum rotation around the vertical axis — loops.",
-    loop: true,
-    build: (S) => [
-      _kf(S, 0, "ease", (d) => _devMod(d, { ry: -28 })),
-      _kf(S, 0.5, "ease", (d) => _devMod(d, { ry: 28 })),
-      _kf(S, 1, "ease", (d) => _devMod(d, { ry: -28 })),
-    ],
-  },
-  {
-    name: "Dolly Reveal",
-    desc: "Camera pulls back from a close-up to the full scene.",
-    loop: false,
-    build: (S) => {
-      const first = _kf(S, 0, "ease-out", (d) => _devMod(d, { ry: -18 }));
-      first.cam = { pos: _camPulled(S, 0.5, -0.04), target: [...S.cam.target] };
-      return [first, _kf(S, 1, "ease", (d) => _devMod(d))];
-    },
-  },
-  {
-    name: "Slide & Settle",
-    desc: "Slides in from the left and eases to rest.",
-    loop: false,
-    build: (S) => [
-      _kf(S, 0, "ease-out", (d) => _devMod(d, { dx: -0.3, ry: -40 })),
-      _kf(S, 0.75, "ease", (d) => _devMod(d, { dx: 0.01, ry: 4 })),
-      _kf(S, 1, "ease", (d) => _devMod(d)),
-    ],
-  },
-];
-
-function applyAnimPreset(p) {
-  tlPause();
-  const S = tlSnapshot();
-  TL.keyframes = p.build(S);
-  tlSort();
-  TL.loop = p.loop;
-  $("tlLoop").classList.toggle("active", TL.loop);
-  TL.selected = null;
-  tlSeek(0);
-  tlRefresh();
-  tlPresetsMenu.hidden = true;
-  setStatus(`${p.name} applied — tweak the keyframes, or just export.`);
-  tlPlayStart(); // instant feedback
-}
-
-for (const p of ANIM_PRESETS) {
-  const b = document.createElement("button");
-  b.className = "tl-preset-item";
-  const nm = document.createElement("span");
-  nm.className = "tl-preset-name";
-  nm.textContent = p.name;
-  const ds = document.createElement("span");
-  ds.className = "tl-preset-desc";
-  ds.textContent = p.desc;
-  b.append(nm, ds);
-  b.addEventListener("click", () => applyAnimPreset(p));
-  tlPresetsMenu.appendChild(b);
-}
-$("tlPresetsBtn").addEventListener("click", (e) => {
-  e.stopPropagation();
-  tlPresetsMenu.hidden = !tlPresetsMenu.hidden;
-});
-document.addEventListener("click", (e) => {
-  if (!tlPresetsMenu.hidden && !e.target.closest(".tl-presets-wrap")) tlPresetsMenu.hidden = true;
-});
-
-// ---- Persistence (cloud mockups) & device lifecycle ----
+// =====================================================================
+// Persistence (cloud mockups) & device lifecycle
+// =====================================================================
 function tlSerialize() {
-  if (!TL || !TL.keyframes.length) return null;
-  return { duration: TL.duration, loop: TL.loop, keyframes: tlClone(TL.keyframes) };
+  if (!TL || tlTimelineEmpty()) return null;
+  return {
+    duration: TL.duration,
+    loop: TL.loop,
+    keyframes: tlClone(TL.keyframes),
+    rest: TL.rest ? tlClone(TL.rest) : null,
+    clips: TL.clips.map((c) => ({ preset: c.preset, dev: c.dev, start: c.start, dur: c.dur })),
+    // Screen clips reference session-uploaded media and aren't persisted yet.
+  };
 }
 
 function tlRestore(a) {
   if (!TL) return;
   tlPause();
   TL.selected = null;
-  if (a && Array.isArray(a.keyframes) && a.keyframes.length) {
+  TL.selClip = null;
+  TL.screenClips = [];
+  if (a && (Array.isArray(a.keyframes) || Array.isArray(a.clips))) {
     TL.duration = THREE.MathUtils.clamp(a.duration || 5, 1, 60);
     TL.loop = a.loop !== false;
-    TL.keyframes = tlClone(a.keyframes);
+    TL.keyframes = tlClone(a.keyframes || []);
+    TL.clips = (a.clips || [])
+      .filter((c) => clipPreset(c.preset))
+      .map((c) => ({ id: ++_tlClipSeq, dev: c.dev | 0, preset: c.preset, start: +c.start || 0, dur: Math.max(0.2, +c.dur || 1) }));
+    TL.rest = a.rest ? tlClone(a.rest) : null;
     tlSort();
   } else {
     TL.keyframes = [];
+    TL.clips = [];
+    TL.rest = null;
   }
   TL.time = 0;
   $("tlDuration").value = TL.duration;
@@ -3016,16 +3822,16 @@ function tlRestore(a) {
 }
 
 // New devices hold their current pose across existing keyframes; removed
-// devices drop out of every keyframe so indexes stay aligned.
+// devices drop out of keyframes and clips so indexes stay aligned.
 function tlOnDeviceAdded(dev) {
   if (!TL) return;
-  for (const k of TL.keyframes) {
-    k.devices.push({
-      pos: dev.group.position.toArray(),
-      quat: dev.group.quaternion.toArray(),
-      scale: dev.group.scale.toArray(),
-    });
-  }
+  const entry = {
+    pos: dev.group.position.toArray(),
+    quat: dev.group.quaternion.toArray(),
+    scale: dev.group.scale.toArray(),
+  };
+  for (const k of TL.keyframes) k.devices.push(tlClone(entry));
+  if (TL.rest) TL.rest.devices.push(tlClone(entry));
 }
 
 function tlOnDeviceRemoved(i) {
@@ -3033,9 +3839,33 @@ function tlOnDeviceRemoved(i) {
   for (const k of TL.keyframes) {
     if (k.devices.length > i) k.devices.splice(i, 1);
   }
+  if (TL.rest && TL.rest.devices.length > i) TL.rest.devices.splice(i, 1);
+  TL.clips = TL.clips.filter((c) => c.dev !== i);
+  TL.screenClips = TL.screenClips.filter((c) => c.dev !== i);
+  for (const c of TL.clips) if (c.dev > i) c.dev--;
+  for (const c of TL.screenClips) if (c.dev > i) c.dev--;
+  if (TL.selClip && ![...TL.clips, ...TL.screenClips].includes(TL.selClip)) TL.selClip = null;
+  tlRefresh();
+}
+
+function tlOnActiveDeviceChanged() {
+  if (!TL) return;
+  TL.selClip = null;
+  tlRenderLane();
+}
+
+function tlOnAssetDeleted(asset) {
+  if (!TL) return;
+  const before = TL.screenClips.length;
+  TL.screenClips = TL.screenClips.filter((c) => c.asset !== asset);
+  if (TL.screenClips.length !== before) {
+    devices.forEach((d) => { d._screenClipId = undefined; });
+    tlRefresh();
+  }
 }
 
 // ---- Boot ----
+tlSyncLaneTabs();
 tlRenderRuler();
 tlSyncUI();
 tlRefresh();
