@@ -15,6 +15,7 @@ const DEVICE_TYPES = [
     id: "iphone17pro",
     name: "iPhone 17 Pro",
     icon: "📱",
+    iconSvg: '<svg class="i"><use href="#i-phone"/></svg>',
     modelUrl: "iphone-17-pro/source/iPhone%2017%20Pro.glb",
     loader: "gltf",
     targetSize: 0.16,
@@ -26,6 +27,7 @@ const DEVICE_TYPES = [
     id: "applewatchultra2",
     name: "Apple Watch Ultra 2",
     icon: "⌚",
+    iconSvg: '<svg class="i"><use href="#i-watch"/></svg>',
     modelUrl: "apple_watch_ultra_2.glb",
     loader: "gltf",
     // A real Apple Watch Ultra (~49mm) is roughly a third of an iPhone (~150mm),
@@ -238,7 +240,7 @@ async function loadTemplate(type) {
 loadTemplate(DEVICE_TYPES[0]).then((tmpl) => {
   loadingEl.classList.add("hidden");
   _buildAndAddDevice(DEVICE_TYPES[0], tmpl);
-  setStatus("Ready. Upload an image for the screen, or ＋ Add Device.");
+  setStatus("Ready — import an image to the screen, or add a device.");
   render();
 }).catch((err) => {
   console.error("startup build failed:", err);
@@ -409,6 +411,7 @@ function buildDevice(type, tmpl) {
 function _buildAndAddDevice(type, tmpl) {
   const dev = buildDevice(type, tmpl);
   dev.group.position.x = (devices.length - 1) * DEVICE_SPACING;
+  tlOnDeviceAdded(dev);
   selectDevice(dev);
   renderDeviceBar();
   render();
@@ -427,7 +430,7 @@ function openDevicePicker() {
     card.className = "device-type-card";
     const iconEl = document.createElement("div");
     iconEl.className = "device-card-icon";
-    iconEl.textContent = type.icon;
+    iconEl.innerHTML = type.iconSvg || type.icon;
     const nameEl = document.createElement("div");
     nameEl.className = "device-card-name";
     nameEl.textContent = type.name;
@@ -454,6 +457,7 @@ function removeDevice(dev) {
   scene.remove(dev.group);
   const i = devices.indexOf(dev);
   devices.splice(i, 1);
+  tlOnDeviceRemoved(i);
   if (activeDevice === dev) selectDevice(devices[Math.max(0, i - 1)]);
   renderDeviceBar();
   updateSaveButtonLabel();
@@ -493,7 +497,7 @@ function renderDeviceBar() {
     chip.className = "device-chip" + (activeKind === "device" && dev === activeDevice ? " active" : "");
     const icon = document.createElement("span");
     icon.className = "chip-icon";
-    icon.textContent = dev.type.icon;
+    icon.innerHTML = dev.type.iconSvg || dev.type.icon;
     const label = document.createElement("span");
     label.textContent = `${dev.type.name} ${dev.typeCount}`;
     label.addEventListener("click", () => selectDevice(dev));
@@ -520,7 +524,7 @@ function renderDeviceBar() {
     chip.className = "device-chip" + (activeKind === "background" ? " active" : "");
     const icon = document.createElement("span");
     icon.className = "chip-icon";
-    icon.textContent = "🖼";
+    icon.innerHTML = '<svg class="i"><use href="#i-image"/></svg>';
     const label = document.createElement("span");
     label.textContent = "Background";
     chip.append(icon, label);
@@ -802,7 +806,9 @@ function renderAssets() {
       vid.preload = "metadata";
       const badge = document.createElement("span");
       badge.className = "asset-badge";
-      badge.textContent = a.trim ? "✂" : "▶";
+      badge.innerHTML = a.trim
+        ? '<svg class="i"><use href="#i-scissors"/></svg>'
+        : '<svg class="i"><use href="#i-play"/></svg>';
       wrap.append(vid, badge);
       wrap.addEventListener("click", () => openTrimEditor(a));
       row.appendChild(wrap);
@@ -1590,7 +1596,7 @@ function setMode(m) {
   transform.setMode(m);
   transform.setSpace(m === "rotate" ? "local" : "world");
   modeButtons.forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
-  $("resetXform").textContent = m === "rotate" ? "↻ Reset rotate" : "↻ Reset move";
+  $("resetXformLabel").textContent = m === "rotate" ? "Reset rotation" : "Reset position";
   refreshTransformSliders();
   render();
 }
@@ -1620,9 +1626,12 @@ $("resetXform").addEventListener("click", () => {
 });
 
 window.addEventListener("keydown", (e) => {
-  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+  if (document.querySelector(".modal:not([hidden])")) return;
   if (e.key === "w") setMode("translate");
   if (e.key === "e") setMode("rotate");
+  if (e.key === " ") { e.preventDefault(); tlTogglePlay(); }
+  if (e.key === "k") { tlPause(); tlAddOrUpdateKey(); }
 });
 
 // Scene: background is always transparent. The key/fill/env levels are set
@@ -1690,6 +1699,7 @@ function maxExportScaleFactor() {
 // clamped to what the GPU can allocate.
 function exportScaleFactor() {
   const longEdgeCss = Math.max(canvas.clientWidth, canvas.clientHeight);
+  if (!longEdgeCss) return 1; // canvas not laid out (hidden/minimized window)
   return Math.min(PREVIEW_LONG_EDGE / longEdgeCss, maxExportScaleFactor());
 }
 
@@ -1720,15 +1730,20 @@ function renderToBlob(scaleFactor = exportScaleFactor()) {
 // Swap the Save button (and the crop modal's download button) between still and
 // video output depending on whether any device's screen is a clip.
 function updateSaveButtonLabel() {
-  const vid = isVideoMockup();
-  $("savePng").textContent = vid ? "⤓ Save as video" : "⤓ Save as PNG";
-  $("cropDownload").textContent = vid ? "⤓ Download video" : "⤓ Download PNG";
+  const vid = isVideoMockup() || animActive();
+  $("savePngLabel").textContent = vid ? "Export Video" : "Export PNG";
+  $("cropDownloadLabel").textContent = vid ? "Download Video" : "Download PNG";
 }
 
 $("savePng").addEventListener("click", async () => {
+  tlPause();
   setStatus("Rendering…");
   updateSaveButtonLabel();
   const blob = await renderToBlob();
+  if (!blob) {
+    setStatus("Couldn't render the preview — make sure the window is visible and try again.");
+    return;
+  }
   cropImg.src = URL.createObjectURL(blob);
   cropImg.onload = () => {
     saveModal.hidden = false;
@@ -1948,10 +1963,14 @@ async function downloadVideo(cropNorm) {
   const vids = devices
     .filter((d) => d.screenIsVideo && d.screenVideo)
     .map((d) => ({ v: d.screenVideo, asset: d.screenVideoAsset }));
-  if (!vids.length) return downloadStillPng();
-
   const durOf = (x) => (x.asset?.trim?.end ?? x.v.duration) - (x.asset?.trim?.start ?? 0);
-  const maxDur = Math.max(...vids.map(durOf));
+  // Clip length: one full timeline cycle, or the longest screen clip — whichever
+  // is longer (a looping animation keeps cycling under a longer screen video).
+  const animDur = animActive() ? TL.duration : 0;
+  const vidDur = vids.length ? Math.max(...vids.map(durOf)) : 0;
+  const maxDur = Math.max(animDur, vidDur);
+  if (!maxDur) return downloadStillPng();
+  tlPause();
 
   // Reproduce the still preview's exact framing: same camera aspect and the same
   // canvas proportions used when the preview was rendered (previewBasis), so the
@@ -2006,13 +2025,33 @@ async function downloadVideo(cropNorm) {
 
   await new Promise((resolve) => {
     function frame() {
+      const elapsed = (performance.now() - startT) / 1000;
+      // Drive the animation timeline: loop cycles, otherwise hold the last pose.
+      if (animDur) {
+        const u = TL.loop && elapsed > TL.duration
+          ? (elapsed % TL.duration) / TL.duration
+          : Math.min(1, elapsed / TL.duration);
+        tlApplyU(u);
+      }
       renderFrame();
       octx.clearRect(0, 0, outW, outH);
       // The background plane is in the render, so just blit the crop region.
       octx.drawImage(canvas, sx, sy, outW, outH, 0, 0, outW, outH);
-      const elapsed = (performance.now() - startT) / 1000;
       if (elapsed >= maxDur) return resolve();
-      requestAnimationFrame(frame);
+      schedule();
+    }
+    // rAF starves when the tab is hidden, so race it against a timer — the
+    // export still completes (at a lower capture rate) if the tab loses focus.
+    function schedule() {
+      let called = false;
+      const once = () => {
+        if (called) return;
+        called = true;
+        clearTimeout(tid);
+        frame();
+      };
+      const tid = setTimeout(once, 100);
+      requestAnimationFrame(once);
     }
     frame();
   });
@@ -2027,6 +2066,8 @@ async function downloadVideo(cropNorm) {
   camera.updateProjectionMatrix();
   exporting = false;
   onResize();
+  // Put the scene back at the on-screen playhead pose.
+  if (animDur) tlApplyU(THREE.MathUtils.clamp(TL.time / TL.duration, 0, 1));
 
   const blob = new Blob(chunks, { type: mime });
   const a = document.createElement("a");
@@ -2039,7 +2080,7 @@ async function downloadVideo(cropNorm) {
 }
 
 $("cropDownload").addEventListener("click", () => {
-  if (isVideoMockup()) downloadVideo(cropRectNormalized());
+  if (isVideoMockup() || animActive()) downloadVideo(cropRectNormalized());
   else downloadStillPng();
 });
 
@@ -2077,6 +2118,7 @@ function animate() {
   requestAnimationFrame(animate);
   if (exporting) return; // downloadVideo drives rendering itself
   controls.update();
+  tlTick(); // after controls.update() so timeline playback owns the camera
   if (anyVideoPlaying()) needsRender = true;
   if (needsRender) {
     renderFrame();
@@ -2233,6 +2275,7 @@ loadSharedPresets();
 function getSceneState() {
   return {
     drama, // scene-wide lighting contrast
+    anim: tlSerialize(), // animation timeline (null when no keyframes)
     devices: devices.map((d) => ({
       type: d.type.id,
       settings: { ...d.settings },
@@ -2276,6 +2319,7 @@ async function applySceneState(state, imagePaths) {
   }
   selectDevice(devices[0]);
   renderDeviceBar();
+  tlRestore(state.anim);
   updateSaveButtonLabel();
 }
 
@@ -2437,3 +2481,561 @@ async function deleteMockup(row) {
   setStatus(`Deleted “${row.name}”.`);
   refreshMockups();
 }
+
+// =====================================================================
+// Animation timeline — Rotato-style scene-snapshot keyframes.
+// A keyframe captures the camera and every device's transform at a point on
+// a normalized 0..1 timeline; playback tweens between snapshots (position/
+// scale lerp, quaternion slerp) with per-keyframe easing. Keyframe times are
+// normalized, so changing Duration stretches the whole animation.
+//
+// Declared with `var` (not const) so the early synchronous animate() call can
+// hit tlTick()'s `if (!TL)` guard instead of a temporal-dead-zone error.
+// =====================================================================
+var TL = {
+  duration: 5, // seconds
+  loop: true,
+  keyframes: [], // sorted by u: { u, easing, cam, devices[], bg }
+  playing: false,
+  time: 0, // playhead, seconds
+  playT0: 0, // performance.now() anchor while playing
+  selected: null,
+};
+
+const tlTrack = $("tlTrack");
+const tlRulerEl = $("tlRuler");
+const tlPlayheadEl = $("tlPlayhead");
+const tlPlayBtn = $("tlPlay");
+const tlPlayIcon = $("tlPlayIcon");
+const tlPresetsMenu = $("tlPresetsMenu");
+
+const TL_EASE = {
+  linear: (t) => t,
+  ease: (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
+  "ease-in": (t) => t * t * t,
+  "ease-out": (t) => 1 - Math.pow(1 - t, 3),
+};
+
+function animActive() {
+  return !!TL && TL.keyframes.length >= 2;
+}
+
+// ---- Snapshots ----
+function tlSnapshot() {
+  return {
+    cam: { pos: camera.position.toArray(), target: controls.target.toArray() },
+    devices: devices.map((d) => ({
+      pos: d.group.position.toArray(),
+      quat: d.group.quaternion.toArray(),
+      scale: d.group.scale.toArray(),
+    })),
+    bg: bgLayer.active && bgLayer.group
+      ? { pos: bgLayer.group.position.toArray(), quat: bgLayer.group.quaternion.toArray() }
+      : null,
+  };
+}
+
+function tlClone(o) {
+  return JSON.parse(JSON.stringify(o));
+}
+
+const _tlQa = new THREE.Quaternion();
+const _tlQb = new THREE.Quaternion();
+const _lerp = (a, b, t, i) => a[i] + (b[i] - a[i]) * t;
+
+// Apply the interpolated scene state for normalized time u.
+function tlApplyU(u) {
+  const k = TL.keyframes;
+  if (!k.length) return;
+  let a = k[0], b = k[0], t = 0;
+  if (u >= k[k.length - 1].u) {
+    a = b = k[k.length - 1]; // hold the last pose past the final keyframe
+  } else if (u > k[0].u) {
+    for (let i = 0; i < k.length - 1; i++) {
+      if (u >= k[i].u && u <= k[i + 1].u) {
+        a = k[i];
+        b = k[i + 1];
+        const span = Math.max(1e-6, b.u - a.u);
+        t = (TL_EASE[a.easing] || TL_EASE.ease)((u - a.u) / span);
+        break;
+      }
+    }
+  }
+  camera.position.set(
+    _lerp(a.cam.pos, b.cam.pos, t, 0),
+    _lerp(a.cam.pos, b.cam.pos, t, 1),
+    _lerp(a.cam.pos, b.cam.pos, t, 2)
+  );
+  controls.target.set(
+    _lerp(a.cam.target, b.cam.target, t, 0),
+    _lerp(a.cam.target, b.cam.target, t, 1),
+    _lerp(a.cam.target, b.cam.target, t, 2)
+  );
+  camera.lookAt(controls.target);
+  const n = Math.min(devices.length, a.devices.length, b.devices.length);
+  for (let i = 0; i < n; i++) {
+    const g = devices[i].group;
+    const da = a.devices[i];
+    const db = b.devices[i];
+    g.position.set(_lerp(da.pos, db.pos, t, 0), _lerp(da.pos, db.pos, t, 1), _lerp(da.pos, db.pos, t, 2));
+    _tlQa.fromArray(da.quat);
+    _tlQb.fromArray(db.quat);
+    g.quaternion.copy(_tlQa.slerp(_tlQb, t));
+    g.scale.set(_lerp(da.scale, db.scale, t, 0), _lerp(da.scale, db.scale, t, 1), _lerp(da.scale, db.scale, t, 2));
+  }
+  if (a.bg && b.bg && bgLayer.active && bgLayer.group) {
+    const g = bgLayer.group;
+    g.position.set(_lerp(a.bg.pos, b.bg.pos, t, 0), _lerp(a.bg.pos, b.bg.pos, t, 1), _lerp(a.bg.pos, b.bg.pos, t, 2));
+    _tlQa.fromArray(a.bg.quat);
+    _tlQb.fromArray(b.bg.quat);
+    g.quaternion.copy(_tlQa.slerp(_tlQb, t));
+  }
+  render();
+}
+
+// ---- Keyframe CRUD ----
+function tlSort() {
+  TL.keyframes.sort((x, y) => x.u - y.u);
+}
+
+// A keyframe counts as "at the playhead" within 0.05s.
+function tlFindNear(u) {
+  return TL.keyframes.find((kf) => Math.abs(kf.u - u) * TL.duration < 0.05);
+}
+
+function tlAddOrUpdateKey() {
+  const u = THREE.MathUtils.clamp(TL.time / TL.duration, 0, 1);
+  const near = tlFindNear(u);
+  if (near) {
+    Object.assign(near, tlSnapshot());
+    TL.selected = near;
+    setStatus(`Keyframe updated at ${(near.u * TL.duration).toFixed(2)}s.`);
+  } else {
+    const kf = { u, easing: "ease", ...tlSnapshot() };
+    TL.keyframes.push(kf);
+    tlSort();
+    TL.selected = kf;
+    setStatus(`Keyframe added at ${(u * TL.duration).toFixed(2)}s.`);
+  }
+  tlRefresh();
+}
+
+// ---- UI sync ----
+function tlFmtClock(t) {
+  const m = Math.floor(t / 60);
+  const s = t - m * 60;
+  return `${m}:${s < 10 ? "0" : ""}${s.toFixed(1)}`;
+}
+
+function tlSyncUI() {
+  tlPlayheadEl.style.left = (THREE.MathUtils.clamp(TL.time / TL.duration, 0, 1) * 100) + "%";
+  $("tlCurrent").textContent = tlFmtClock(TL.time);
+  $("tlTotal").textContent = tlFmtClock(TL.duration);
+}
+
+// Rebuild keyframe markers + dependent chrome (empty state, key tools, labels).
+function tlRefresh() {
+  tlTrack.querySelectorAll(".tl-key").forEach((el) => el.remove());
+  TL.keyframes.forEach((kf, i) => {
+    const el = document.createElement("button");
+    el.className = "tl-key" + (kf === TL.selected ? " selected" : "");
+    el.style.left = (kf.u * 100) + "%";
+    el.dataset.i = i;
+    el.title = `Keyframe — ${(kf.u * TL.duration).toFixed(2)}s`;
+    tlTrack.appendChild(el);
+  });
+  $("tlEmpty").hidden = TL.keyframes.length > 0;
+  $("tlClear").hidden = TL.keyframes.length === 0;
+  $("tlKeyTools").hidden = !TL.selected;
+  if (TL.selected) $("tlEasing").value = TL.selected.easing;
+  $("tlAddKeyLabel").textContent =
+    tlFindNear(THREE.MathUtils.clamp(TL.time / TL.duration, 0, 1)) ? "Update keyframe" : "Add keyframe";
+  updateSaveButtonLabel();
+}
+
+// Reposition markers from data without rebuilding (used mid-drag, no resort).
+function tlLayoutKeys() {
+  tlTrack.querySelectorAll(".tl-key").forEach((el) => {
+    const kf = TL.keyframes[+el.dataset.i];
+    if (kf) el.style.left = (kf.u * 100) + "%";
+  });
+}
+
+function tlSeek(u) {
+  TL.time = THREE.MathUtils.clamp(u, 0, 1) * TL.duration;
+  tlApplyU(THREE.MathUtils.clamp(u, 0, 1));
+  tlSyncUI();
+  $("tlAddKeyLabel").textContent =
+    tlFindNear(THREE.MathUtils.clamp(u, 0, 1)) ? "Update keyframe" : "Add keyframe";
+  if (!TL.playing) refreshTransformSliders();
+}
+
+// ---- Playback ----
+function tlPlayStart() {
+  if (TL.keyframes.length < 2) {
+    setStatus("Add at least two keyframes — or pick an Animate preset — to play.");
+    return;
+  }
+  if (!TL.loop && TL.time >= TL.duration - 1e-3) TL.time = 0; // replay from start
+  TL.playing = true;
+  TL.playT0 = performance.now() - TL.time * 1000;
+  controls.enabled = false; // playback owns the camera
+  transform.enabled = false;
+  transform.visible = false;
+  tlPlayIcon.setAttribute("href", "#i-pause");
+  tlPlayBtn.classList.add("playing");
+}
+
+function tlPause() {
+  if (!TL || !TL.playing) return;
+  TL.playing = false;
+  controls.enabled = true;
+  const giz = $("gizmoToggle").checked;
+  transform.enabled = giz;
+  transform.visible = giz;
+  tlPlayIcon.setAttribute("href", "#i-play");
+  tlPlayBtn.classList.remove("playing");
+  refreshTransformSliders();
+  tlRefresh();
+}
+
+function tlTogglePlay() {
+  if (!TL) return;
+  if (TL.playing) tlPause();
+  else tlPlayStart();
+}
+
+// Per-frame driver, called from animate().
+function tlTick() {
+  if (!TL || !TL.playing) return;
+  let t = (performance.now() - TL.playT0) / 1000;
+  if (t >= TL.duration) {
+    if (TL.loop) {
+      t %= TL.duration;
+      TL.playT0 = performance.now() - t * 1000;
+    } else {
+      t = TL.duration;
+    }
+  }
+  TL.time = t;
+  tlApplyU(t / TL.duration);
+  tlSyncUI();
+  if (!TL.loop && t >= TL.duration) tlPause();
+}
+
+// ---- Ruler ----
+function tlRenderRuler() {
+  tlRulerEl.innerHTML = "";
+  const dur = TL.duration;
+  const steps = [0.5, 1, 2, 5, 10, 15, 30];
+  const major = steps.find((s) => dur / s <= 10) || 30;
+  const minor = major / 5;
+  const n = Math.floor(dur / minor + 1e-6);
+  for (let i = 0; i <= n; i++) {
+    const t = i * minor;
+    const isMajor = i % 5 === 0;
+    const tick = document.createElement("div");
+    tick.className = "tl-tick" + (isMajor ? " major" : "");
+    tick.style.left = (t / dur * 100) + "%";
+    tlRulerEl.appendChild(tick);
+    if (isMajor) {
+      const lab = document.createElement("span");
+      lab.className = "tl-tick-label";
+      lab.style.left = (t / dur * 100) + "%";
+      lab.textContent = `${Math.round(t * 10) / 10}s`;
+      tlRulerEl.appendChild(lab);
+    }
+  }
+}
+
+// ---- Track & ruler scrubbing, keyframe dragging ----
+function tlPointerU(e) {
+  const r = tlTrack.getBoundingClientRect();
+  return THREE.MathUtils.clamp((e.clientX - r.left) / r.width, 0, 1);
+}
+
+let _tlDragKey = null;
+let _tlDragMoved = false;
+
+tlTrack.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  tlPause();
+  const keyEl = e.target.closest?.(".tl-key");
+  if (keyEl) {
+    _tlDragKey = TL.keyframes[+keyEl.dataset.i];
+    _tlDragMoved = false;
+    TL.selected = _tlDragKey;
+    tlRefresh();
+  } else {
+    _tlDragKey = null;
+    if (TL.selected) {
+      TL.selected = null;
+      tlRefresh();
+    }
+    tlSeek(tlPointerU(e));
+  }
+  tlTrack.setPointerCapture(e.pointerId);
+});
+
+tlTrack.addEventListener("pointermove", (e) => {
+  if (!tlTrack.hasPointerCapture?.(e.pointerId)) return;
+  if (_tlDragKey) {
+    _tlDragMoved = true;
+    _tlDragKey.u = tlPointerU(e);
+    tlLayoutKeys();
+  } else {
+    tlSeek(tlPointerU(e));
+  }
+});
+
+tlTrack.addEventListener("pointerup", () => {
+  if (!_tlDragKey) return;
+  tlSort();
+  tlSeek(_tlDragKey.u); // click selects + jumps; drag lands the playhead on it
+  if (_tlDragMoved) setStatus(`Keyframe moved to ${(_tlDragKey.u * TL.duration).toFixed(2)}s.`);
+  _tlDragKey = null;
+  tlRefresh();
+});
+
+tlRulerEl.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  tlPause();
+  tlRulerEl.setPointerCapture(e.pointerId);
+  tlSeek(tlPointerU(e));
+});
+tlRulerEl.addEventListener("pointermove", (e) => {
+  if (tlRulerEl.hasPointerCapture?.(e.pointerId)) tlSeek(tlPointerU(e));
+});
+
+// ---- Transport & toolbar ----
+tlPlayBtn.addEventListener("click", tlTogglePlay);
+$("tlSkipStart").addEventListener("click", () => {
+  tlPause();
+  tlSeek(0);
+});
+$("tlLoop").addEventListener("click", () => {
+  TL.loop = !TL.loop;
+  $("tlLoop").classList.toggle("active", TL.loop);
+});
+$("tlAddKey").addEventListener("click", () => {
+  tlPause();
+  tlAddOrUpdateKey();
+});
+$("tlDeleteKey").addEventListener("click", () => {
+  if (!TL.selected) return;
+  TL.keyframes = TL.keyframes.filter((k) => k !== TL.selected);
+  TL.selected = null;
+  tlRefresh();
+  setStatus("Keyframe deleted.");
+});
+$("tlClear").addEventListener("click", () => {
+  tlPause();
+  TL.keyframes = [];
+  TL.selected = null;
+  tlRefresh();
+  setStatus("Cleared all keyframes.");
+});
+$("tlEasing").addEventListener("change", (e) => {
+  if (TL.selected) TL.selected.easing = e.target.value;
+});
+$("tlDuration").addEventListener("change", (e) => {
+  tlPause();
+  const v = THREE.MathUtils.clamp(parseFloat(e.target.value) || 5, 1, 60);
+  e.target.value = v;
+  const u = TL.time / TL.duration;
+  TL.duration = v;
+  TL.time = u * v; // keyframes are normalized, so they stretch with duration
+  tlRenderRuler();
+  tlSyncUI();
+});
+
+// ---- Animation presets ----
+// Each preset builds keyframes around the CURRENT pose (the snapshot S), so it
+// composes with however the scene is already arranged.
+function _devMod(d, { dx = 0, dy = 0, dz = 0, rx = 0, ry = 0, rz = 0, s = 1 } = {}) {
+  const q = new THREE.Quaternion().fromArray(d.quat);
+  const off = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+    THREE.MathUtils.degToRad(rx),
+    THREE.MathUtils.degToRad(ry),
+    THREE.MathUtils.degToRad(rz)
+  ));
+  return {
+    pos: [d.pos[0] + dx, d.pos[1] + dy, d.pos[2] + dz],
+    quat: off.multiply(q).toArray(), // world-frame rotation offset
+    scale: d.scale.map((v) => v * s),
+  };
+}
+
+// Clone the base snapshot into a keyframe at u, optionally remapping devices.
+function _kf(S, u, easing, mod) {
+  const k = tlClone(S);
+  k.u = u;
+  k.easing = easing;
+  if (mod) k.devices = S.devices.map((d, i) => mod(d, i));
+  return k;
+}
+
+// Camera position pulled toward the target by factor f (0..1), nudged in y.
+function _camPulled(S, f, dy = 0) {
+  const p = S.cam.pos, t = S.cam.target;
+  return [p[0] + (t[0] - p[0]) * f, p[1] + (t[1] - p[1]) * f + dy, p[2] + (t[2] - p[2]) * f];
+}
+
+const ANIM_PRESETS = [
+  {
+    name: "Hero Orbit",
+    desc: "Full 360° turntable spin — loops seamlessly.",
+    loop: true,
+    build: (S) => [0, 90, 180, 270, 360].map((deg, i) =>
+      _kf(S, i / 4, "linear", (d) => _devMod(d, { ry: deg }))),
+  },
+  {
+    name: "Showcase Sweep",
+    desc: "Gentle side-to-side turn, like a product hero shot.",
+    loop: true,
+    build: (S) => [
+      _kf(S, 0, "ease", (d) => _devMod(d, { ry: -24, rx: 4 })),
+      _kf(S, 0.5, "ease", (d) => _devMod(d, { ry: 24, rx: 4 })),
+      _kf(S, 1, "ease", (d) => _devMod(d, { ry: -24, rx: 4 })),
+    ],
+  },
+  {
+    name: "Pop In",
+    desc: "Rises from below and settles with a soft overshoot.",
+    loop: false,
+    build: (S) => [
+      _kf(S, 0, "ease-out", (d) => _devMod(d, { dy: -0.3, ry: -28, s: 0.7 })),
+      _kf(S, 0.7, "ease", (d) => _devMod(d, { dy: 0.012, ry: 3, s: 1.02 })),
+      _kf(S, 1, "ease", (d) => _devMod(d)),
+    ],
+  },
+  {
+    name: "Float",
+    desc: "Weightless hover with a hint of tilt — loops.",
+    loop: true,
+    build: (S) => [
+      _kf(S, 0, "ease", (d) => _devMod(d)),
+      _kf(S, 0.25, "ease", (d) => _devMod(d, { dy: 0.012, rz: 1.4 })),
+      _kf(S, 0.5, "ease", (d) => _devMod(d)),
+      _kf(S, 0.75, "ease", (d) => _devMod(d, { dy: -0.012, rz: -1.4 })),
+      _kf(S, 1, "ease", (d) => _devMod(d)),
+    ],
+  },
+  {
+    name: "Swing",
+    desc: "Pendulum rotation around the vertical axis — loops.",
+    loop: true,
+    build: (S) => [
+      _kf(S, 0, "ease", (d) => _devMod(d, { ry: -28 })),
+      _kf(S, 0.5, "ease", (d) => _devMod(d, { ry: 28 })),
+      _kf(S, 1, "ease", (d) => _devMod(d, { ry: -28 })),
+    ],
+  },
+  {
+    name: "Dolly Reveal",
+    desc: "Camera pulls back from a close-up to the full scene.",
+    loop: false,
+    build: (S) => {
+      const first = _kf(S, 0, "ease-out", (d) => _devMod(d, { ry: -18 }));
+      first.cam = { pos: _camPulled(S, 0.5, -0.04), target: [...S.cam.target] };
+      return [first, _kf(S, 1, "ease", (d) => _devMod(d))];
+    },
+  },
+  {
+    name: "Slide & Settle",
+    desc: "Slides in from the left and eases to rest.",
+    loop: false,
+    build: (S) => [
+      _kf(S, 0, "ease-out", (d) => _devMod(d, { dx: -0.3, ry: -40 })),
+      _kf(S, 0.75, "ease", (d) => _devMod(d, { dx: 0.01, ry: 4 })),
+      _kf(S, 1, "ease", (d) => _devMod(d)),
+    ],
+  },
+];
+
+function applyAnimPreset(p) {
+  tlPause();
+  const S = tlSnapshot();
+  TL.keyframes = p.build(S);
+  tlSort();
+  TL.loop = p.loop;
+  $("tlLoop").classList.toggle("active", TL.loop);
+  TL.selected = null;
+  tlSeek(0);
+  tlRefresh();
+  tlPresetsMenu.hidden = true;
+  setStatus(`${p.name} applied — tweak the keyframes, or just export.`);
+  tlPlayStart(); // instant feedback
+}
+
+for (const p of ANIM_PRESETS) {
+  const b = document.createElement("button");
+  b.className = "tl-preset-item";
+  const nm = document.createElement("span");
+  nm.className = "tl-preset-name";
+  nm.textContent = p.name;
+  const ds = document.createElement("span");
+  ds.className = "tl-preset-desc";
+  ds.textContent = p.desc;
+  b.append(nm, ds);
+  b.addEventListener("click", () => applyAnimPreset(p));
+  tlPresetsMenu.appendChild(b);
+}
+$("tlPresetsBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  tlPresetsMenu.hidden = !tlPresetsMenu.hidden;
+});
+document.addEventListener("click", (e) => {
+  if (!tlPresetsMenu.hidden && !e.target.closest(".tl-presets-wrap")) tlPresetsMenu.hidden = true;
+});
+
+// ---- Persistence (cloud mockups) & device lifecycle ----
+function tlSerialize() {
+  if (!TL || !TL.keyframes.length) return null;
+  return { duration: TL.duration, loop: TL.loop, keyframes: tlClone(TL.keyframes) };
+}
+
+function tlRestore(a) {
+  if (!TL) return;
+  tlPause();
+  TL.selected = null;
+  if (a && Array.isArray(a.keyframes) && a.keyframes.length) {
+    TL.duration = THREE.MathUtils.clamp(a.duration || 5, 1, 60);
+    TL.loop = a.loop !== false;
+    TL.keyframes = tlClone(a.keyframes);
+    tlSort();
+  } else {
+    TL.keyframes = [];
+  }
+  TL.time = 0;
+  $("tlDuration").value = TL.duration;
+  $("tlLoop").classList.toggle("active", TL.loop);
+  tlRenderRuler();
+  tlSyncUI();
+  tlRefresh();
+}
+
+// New devices hold their current pose across existing keyframes; removed
+// devices drop out of every keyframe so indexes stay aligned.
+function tlOnDeviceAdded(dev) {
+  if (!TL) return;
+  for (const k of TL.keyframes) {
+    k.devices.push({
+      pos: dev.group.position.toArray(),
+      quat: dev.group.quaternion.toArray(),
+      scale: dev.group.scale.toArray(),
+    });
+  }
+}
+
+function tlOnDeviceRemoved(i) {
+  if (!TL) return;
+  for (const k of TL.keyframes) {
+    if (k.devices.length > i) k.devices.splice(i, 1);
+  }
+}
+
+// ---- Boot ----
+tlRenderRuler();
+tlSyncUI();
+tlRefresh();

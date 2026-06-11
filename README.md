@@ -1,7 +1,10 @@
-# iPhone Mockup Generator
+# Mockup Studio
 
-A small browser tool that puts your image onto a 3D iPhone 17 Pro, lets you pose
-the phone, and exports a PNG. Built with [Three.js](https://threejs.org/) (loaded
+A browser tool that puts your image onto a 3D iPhone 17 Pro, lets you pose
+the phone, and exports a PNG. The UI is a set of floating glass panels over a
+full-bleed black stage: a top bar (project title, account, Save / Export), a
+left tool rail (Move / Rotate / gizmo visibility), and a right inspector
+(device chips + Screen / Background / Transform / Appearance / Presets). Built with [Three.js](https://threejs.org/) (loaded
 from a CDN — no build step) using the two assets in this folder:
 
 - `iphone-17-pro/source/iPhone 17 Pro.glb` — the phone model
@@ -18,10 +21,10 @@ A local server is required (the browser can't load the `.glb`/`.exr` over `file:
 
 ## Features
 
-- **Multiple devices** — **＋ Add Device** drops another phone into the scene and
-  selects it. Switch or remove devices from the chip bar. Every control below
-  acts on the *selected* device, so each phone can have its own screen, colour,
-  and pose.
+- **Multiple devices** — **＋ Add** (top of the inspector) drops another device
+  into the scene and selects it. Switch or remove devices from the chip strip.
+  Every control acts on the *selected* device, so each phone can have its own
+  screen, colour, and pose.
 - **Upload to screen** — drop any image onto the selected phone's display. Each
   uploaded image is kept as a thumbnail in the **assets row**, so after *Reset
   screen* you can re-apply it (or apply it to another device) with one click.
@@ -42,9 +45,20 @@ A local server is required (the browser can't load the `.glb`/`.exr` over `file:
   in `presets.js` as a fallback. Run [`supabase/presets.sql`](supabase/presets.sql)
   once to create the shared table. (Per-account presets can come later; for now
   shared presets are open for anyone to add/remove — see the SQL to lock down.)
-- **Save** — the always-visible **Save** button (top-right of the panel) renders
-  the scene and opens a **crop modal**: drag/resize the crop box, then download
-  the cropped region as a PNG (transparent where the background is).
+- **Animation** — a Rotato-style timeline dock sits under the stage. A keyframe
+  snapshots the *whole scene* (camera + every device's transform): pose the
+  scene, press **Add keyframe** (`K`), move the playhead, pose again. Playback
+  tweens between snapshots (quaternion slerp) with per-keyframe easing (click a
+  diamond to pick Ease / Ease-in / Ease-out / Linear, drag it to retime, `Space`
+  plays). Keyframe times are normalized, so the **Duration** field stretches the
+  whole animation. The **Animate** menu has 7 presets built from the current
+  pose: Hero Orbit, Showcase Sweep, Pop In, Float, Swing, Dolly Reveal, and
+  Slide & Settle. Animations save with cloud mockups.
+- **Export** — the top-bar button renders the scene and opens a **crop modal**:
+  drag/resize the crop box, then download the cropped region. Stills export as
+  transparent PNG; when the timeline has keyframes (or a screen plays a video
+  clip) the button becomes **Export Video** and records a transparent ~4K WebM
+  of the animation — ready for ads.
 - **Accounts & cloud sync** — sign up / sign in (email + password), then save
   mockups to the cloud and reload them later. Each saved mockup stores its
   settings (colour, transform, fit, brightness) plus the screen image.

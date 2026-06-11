@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>iPhone Mockup Generator</title>
+    <title>Mockup Studio</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -20,10 +20,112 @@
         }
       }
     </script>
+
+    <!-- Shared SVG icon set (referenced with <use href="#i-…">) -->
   </head>
   <body>
+    <svg class="icon-defs" aria-hidden="true">
+      <defs>
+        <symbol id="i-move" viewBox="0 0 24 24">
+          <polyline points="5 9 2 12 5 15" /><polyline points="9 5 12 2 15 5" />
+          <polyline points="15 19 12 22 9 19" /><polyline points="19 9 22 12 19 15" />
+          <line x1="2" y1="12" x2="22" y2="12" /><line x1="12" y1="2" x2="12" y2="22" />
+        </symbol>
+        <symbol id="i-rotate" viewBox="0 0 24 24">
+          <polyline points="23 4 23 10 17 10" />
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+        </symbol>
+        <symbol id="i-reset" viewBox="0 0 24 24">
+          <polyline points="1 4 1 10 7 10" />
+          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+        </symbol>
+        <symbol id="i-eye" viewBox="0 0 24 24">
+          <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" /><circle cx="12" cy="12" r="3" />
+        </symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24">
+          <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+        </symbol>
+        <symbol id="i-download" viewBox="0 0 24 24">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+        </symbol>
+        <symbol id="i-upload" viewBox="0 0 24 24">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
+        </symbol>
+        <symbol id="i-cloud" viewBox="0 0 24 24">
+          <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+        </symbol>
+        <symbol id="i-trash" viewBox="0 0 24 24">
+          <polyline points="3 6 5 6 21 6" />
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        </symbol>
+        <symbol id="i-image" viewBox="0 0 24 24">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+          <circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
+        </symbol>
+        <symbol id="i-x" viewBox="0 0 24 24">
+          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+        </symbol>
+        <symbol id="i-scissors" viewBox="0 0 24 24">
+          <circle cx="6" cy="6" r="3" /><circle cx="6" cy="18" r="3" />
+          <line x1="20" y1="4" x2="8.12" y2="15.88" /><line x1="14.47" y1="14.48" x2="20" y2="20" />
+          <line x1="8.12" y1="8.12" x2="12" y2="12" />
+        </symbol>
+        <symbol id="i-play" viewBox="0 0 24 24">
+          <polygon points="6 3 20 12 6 21 6 3" />
+        </symbol>
+        <symbol id="i-crop" viewBox="0 0 24 24">
+          <path d="M6.13 1L6 16a2 2 0 0 0 2 2h15" /><path d="M1 6.13L16 6a2 2 0 0 1 2 2v15" />
+        </symbol>
+        <symbol id="i-sparkle" viewBox="0 0 24 24">
+          <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" />
+        </symbol>
+        <symbol id="i-pause" viewBox="0 0 24 24">
+          <line x1="9" y1="5" x2="9" y2="19" /><line x1="15" y1="5" x2="15" y2="19" />
+        </symbol>
+        <symbol id="i-skip-back" viewBox="0 0 24 24">
+          <polygon points="19 20 9 12 19 4 19 20" /><line x1="5" y1="19" x2="5" y2="5" />
+        </symbol>
+        <symbol id="i-repeat" viewBox="0 0 24 24">
+          <polyline points="17 1 21 5 17 9" /><path d="M3 11V9a4 4 0 0 1 4-4h14" />
+          <polyline points="7 23 3 19 7 15" /><path d="M21 13v2a4 4 0 0 1-4 4H3" />
+        </symbol>
+        <symbol id="i-diamond" viewBox="0 0 24 24">
+          <path d="M12 2.8L21.2 12 12 21.2 2.8 12z" />
+        </symbol>
+        <symbol id="i-phone" viewBox="0 0 24 24">
+          <rect x="5.5" y="2" width="13" height="20" rx="2.5" />
+          <line x1="10" y1="5" x2="14" y2="5" />
+        </symbol>
+        <symbol id="i-watch" viewBox="0 0 24 24">
+          <rect x="6.5" y="6.5" width="11" height="11" rx="3" />
+          <path d="M9 6.5L9.6 2.8a1 1 0 0 1 1-.8h2.8a1 1 0 0 1 1 .8L15 6.5" />
+          <path d="M9 17.5l.6 3.7a1 1 0 0 0 1 .8h2.8a1 1 0 0 0 1-.8l.6-3.7" />
+        </symbol>
+      </defs>
+    </svg>
+
+    <!-- Full-bleed 3D stage -->
+    <canvas id="stage"></canvas>
+
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <div class="loading-text">Loading model…</div>
+    </div>
+
+    <!-- ============ Floating top bar ============ -->
     <header class="topbar">
-      <div class="brand">iPhone Mockup Generator</div>
+      <div class="brand">
+        <span class="logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <rect x="6.5" y="3" width="11" height="18" rx="2.6" />
+          </svg>
+        </span>
+        <span class="brand-name">Mockup<em>Studio</em></span>
+      </div>
+      <span class="topbar-sep"></span>
       <input
         id="projectTitle"
         class="project-title"
@@ -31,173 +133,278 @@
         value="Untitled"
         aria-label="Project title"
         title="Click to rename"
+        spellcheck="false"
       />
-      <div class="hint-inline">Drag to pan · scroll to zoom · pick a gizmo mode to move/rotate the device</div>
-      <div class="topbar-auth">
-        <div id="headerSignedOut">
-          <button id="openLogin" class="btn mini">Log in</button>
-          <button id="openSignup" class="btn mini primary">Sign up</button>
+      <div class="topbar-right">
+        <div class="topbar-auth">
+          <div id="headerSignedOut">
+            <button id="openLogin" class="btn ghost mini">Log in</button>
+            <button id="openSignup" class="btn mini">Sign up</button>
+          </div>
+          <div id="headerSignedIn" hidden>
+            <span class="user-pill"><strong id="userEmail"></strong></span>
+            <button id="signOut" class="btn ghost mini">Sign out</button>
+          </div>
         </div>
-        <div id="headerSignedIn" hidden>
-          <span class="user-pill">Signed in as <strong id="userEmail"></strong></span>
-          <button id="signOut" class="btn mini">Sign out</button>
-        </div>
+        <span class="topbar-sep"></span>
+        <button id="saveCloud" class="btn ghost" title="Save mockup to the cloud">
+          <svg class="i"><use href="#i-cloud" /></svg><span>Save</span>
+        </button>
+        <button id="savePng" class="btn primary">
+          <svg class="i"><use href="#i-download" /></svg><span id="savePngLabel">Export PNG</span>
+        </button>
       </div>
     </header>
 
-    <main class="layout">
-      <section class="stage-wrap">
-        <canvas id="stage"></canvas>
-        <div class="loading" id="loading">Loading model…</div>
-      </section>
+    <!-- ============ Floating left tool rail ============ -->
+    <nav class="toolrail" aria-label="Tools">
+      <button class="rail-btn mode active" data-mode="translate" id="modeTranslate"
+        data-tip="Move" data-key="W">
+        <svg class="i"><use href="#i-move" /></svg>
+      </button>
+      <button class="rail-btn mode" data-mode="rotate" id="modeRotate"
+        data-tip="Rotate" data-key="E">
+        <svg class="i"><use href="#i-rotate" /></svg>
+      </button>
+      <span class="rail-sep"></span>
+      <label class="rail-btn rail-toggle" data-tip="Show gizmo">
+        <input id="gizmoToggle" type="checkbox" checked class="sr-only" />
+        <svg class="i"><use href="#i-eye" /></svg>
+      </label>
+    </nav>
 
-      <aside class="panel">
-        <!-- Tab switcher: Editor controls vs. saved Mockups -->
-        <div class="panel-tabs" id="panelTabs">
-          <button class="panel-tab active" data-tab="editor" id="tabEditor">Editor</button>
-          <button class="panel-tab" data-tab="mockups" id="tabMockups">Mockups</button>
+    <!-- ============ Animation timeline dock ============ -->
+    <section class="timeline" aria-label="Animation timeline">
+      <div class="timeline-bar">
+        <div class="transport">
+          <button class="tl-btn" id="tlSkipStart" title="Go to start">
+            <svg class="i"><use href="#i-skip-back" /></svg>
+          </button>
+          <button class="tl-btn play" id="tlPlay" title="Play / Pause (Space)">
+            <svg class="i"><use id="tlPlayIcon" href="#i-play" /></svg>
+          </button>
+          <button class="tl-btn active" id="tlLoop" title="Loop playback">
+            <svg class="i"><use href="#i-repeat" /></svg>
+          </button>
         </div>
+        <div class="tl-time">
+          <span id="tlCurrent">0:00.0</span><span class="tl-time-sep">/</span><span id="tlTotal">0:05.0</span>
+        </div>
+        <span class="tl-sep"></span>
+        <button class="btn ghost" id="tlAddKey" title="Capture the current pose as a keyframe (K)">
+          <svg class="i"><use href="#i-diamond" /></svg><span id="tlAddKeyLabel">Add keyframe</span>
+        </button>
+        <div class="tl-key-tools" id="tlKeyTools" hidden>
+          <select id="tlEasing" class="preset-select tl-select" title="Easing out of this keyframe">
+            <option value="ease">Ease in-out</option>
+            <option value="ease-in">Ease in</option>
+            <option value="ease-out">Ease out</option>
+            <option value="linear">Linear</option>
+          </select>
+          <button class="tl-btn danger" id="tlDeleteKey" title="Delete keyframe">
+            <svg class="i"><use href="#i-trash" /></svg>
+          </button>
+        </div>
+        <span class="tl-sep"></span>
+        <div class="tl-presets-wrap">
+          <button class="btn ghost" id="tlPresetsBtn">
+            <svg class="i"><use href="#i-sparkle" /></svg><span>Animate</span>
+          </button>
+          <div class="tl-presets-menu" id="tlPresetsMenu" hidden></div>
+        </div>
+        <button class="btn ghost danger" id="tlClear" title="Remove all keyframes" hidden>Clear</button>
+        <div class="spacer"></div>
+        <label class="tl-duration" title="Animation length — keyframes stretch with it">
+          <span>Duration</span>
+          <input id="tlDuration" type="number" class="num" min="1" max="60" step="0.5" value="5" />
+          <span>s</span>
+        </label>
+      </div>
+      <div class="timeline-body">
+        <div class="tl-ruler" id="tlRuler"></div>
+        <div class="tl-track" id="tlTrack">
+          <div class="tl-guide"></div>
+          <div class="tl-empty" id="tlEmpty">
+            Pose the scene, press <strong>Add keyframe</strong>, move the playhead, pose again —
+            or pick an <strong>Animate</strong> preset. <kbd>Space</kbd> plays.
+          </div>
+          <div class="tl-playhead" id="tlPlayhead"><span class="tl-playhead-cap"></span></div>
+        </div>
+      </div>
+    </section>
 
-        <div class="tab-panel" id="editorPanel">
-        <!-- Sticky header: full-width Save Mockup + Save as PNG, then a scrollable device row -->
-        <div class="panel-head save-actions">
-          <button id="saveCloud" class="btn">☁ Save Mockup</button>
-          <button id="savePng" class="btn primary">⤓ Save as PNG</button>
-        </div>
+    <!-- ============ Floating right inspector ============ -->
+    <aside class="panel">
+      <div class="panel-tabs" id="panelTabs">
+        <button class="panel-tab active" data-tab="editor" id="tabEditor">Editor</button>
+        <button class="panel-tab" data-tab="mockups" id="tabMockups">Mockups</button>
+      </div>
+
+      <div class="tab-panel" id="editorPanel">
+        <!-- Scene strip: add device + one chip per device / background layer -->
         <div class="devicebar" id="deviceBar">
-          <button id="addDevice" class="btn add-device">＋ Add Device</button>
+          <button id="addDevice" class="add-device" title="Add a device to the scene">
+            <svg class="i"><use href="#i-plus" /></svg><span>Add</span>
+          </button>
         </div>
 
         <div class="panel-scroll">
+          <details class="group" open>
+            <summary class="group-title">Screen</summary>
+            <div class="group-body">
+              <button id="importScreen" class="btn upload wide">
+                <svg class="i"><use href="#i-upload" /></svg><span>Import image or video</span>
+              </button>
+              <div class="assetrow" id="assetRow"></div>
+              <button id="clearScreen" class="btn ghost wide">
+                <svg class="i"><use href="#i-reset" /></svg><span>Reset screen</span>
+              </button>
+            </div>
+          </details>
+
+          <details class="group" open>
+            <summary class="group-title">Background</summary>
+            <div class="group-body">
+              <button id="importBackground" class="btn upload wide">
+                <svg class="i"><use href="#i-image" /></svg><span>Import background</span>
+              </button>
+              <button id="clearBackground" class="btn ghost wide">
+                <svg class="i"><use href="#i-x" /></svg><span>Remove background</span>
+              </button>
+            </div>
+          </details>
+
+          <details class="group" open>
+            <summary class="group-title">Transform</summary>
+            <div class="group-body">
+              <label class="row axis">
+                <span class="axis-chip x">X</span>
+                <input id="tX" type="range" />
+                <input id="tXn" type="number" class="num" />
+              </label>
+              <label class="row axis">
+                <span class="axis-chip y">Y</span>
+                <input id="tY" type="range" />
+                <input id="tYn" type="number" class="num" />
+              </label>
+              <label class="row axis">
+                <span class="axis-chip z">Z</span>
+                <input id="tZ" type="range" />
+                <input id="tZn" type="number" class="num" />
+              </label>
+              <button id="resetXform" class="btn ghost wide">
+                <svg class="i"><use href="#i-reset" /></svg><span id="resetXformLabel">Reset position</span>
+              </button>
+            </div>
+          </details>
+
+          <details class="group" open>
+            <summary class="group-title">Appearance</summary>
+            <div class="group-body">
+              <div class="swatches" id="swatches"></div>
+              <label class="row">
+                <span class="row-label">Custom</span>
+                <input id="bodyColor" type="color" value="#4a4a50" />
+              </label>
+              <label class="row">
+                <span class="row-label">Finish</span>
+                <input id="finish" type="range" min="0" max="1" step="0.01" value="0.42" />
+                <input id="finishN" type="number" class="num" min="0" max="1" step="0.01" value="0.42" />
+              </label>
+              <div class="range-caption"><span>Glossy</span><span>Matte</span></div>
+            </div>
+          </details>
+
           <details class="group">
             <summary class="group-title">Presets</summary>
-            <select id="presetSelect" class="preset-select"></select>
-            <div class="modes">
-              <button id="savePreset" class="btn">＋ Save preset</button>
-              <button id="deletePreset" class="btn">🗑 Delete</button>
+            <div class="group-body">
+              <select id="presetSelect" class="preset-select"></select>
+              <div class="modes">
+                <button id="savePreset" class="btn ghost">
+                  <svg class="i"><use href="#i-plus" /></svg><span>Save preset</span>
+                </button>
+                <button id="deletePreset" class="btn ghost danger">
+                  <svg class="i"><use href="#i-trash" /></svg><span>Delete</span>
+                </button>
+              </div>
+              <div class="authnote" id="presetNote">
+                Saving shares the preset with everyone — device poses and camera only, not the screen image.
+              </div>
             </div>
-            <div class="authnote" id="presetNote">
-              Save adds a shared preset everyone gets (device transforms only, not the camera or screen image).
-            </div>
           </details>
-
-          <details class="group">
-            <summary class="group-title">Screen</summary>
-            <button id="importScreen" class="btn upload">⤒ Import to screen</button>
-            <div class="assetrow" id="assetRow"></div>
-            <button id="clearScreen" class="btn">Reset screen</button>
-          </details>
-
-          <details class="group">
-            <summary class="group-title">Background</summary>
-            <button id="importBackground" class="btn upload">⤒ Import background image</button>
-            <button id="clearBackground" class="btn">Remove background</button>
-          </details>
-
-          <details class="group">
-            <summary class="group-title">Transform</summary>
-            <div class="modes">
-              <button class="btn mode active" data-mode="translate" id="modeTranslate">Move (W)</button>
-              <button class="btn mode" data-mode="rotate" id="modeRotate">Rotate (E)</button>
-            </div>
-            <label class="check">
-              <input id="gizmoToggle" type="checkbox" checked />
-              <span>Show gizmo</span>
-            </label>
-            <label class="row">
-              <span>X</span>
-              <input id="tX" type="range" />
-              <input id="tXn" type="number" class="num" />
-            </label>
-            <label class="row">
-              <span>Y</span>
-              <input id="tY" type="range" />
-              <input id="tYn" type="number" class="num" />
-            </label>
-            <label class="row">
-              <span>Z</span>
-              <input id="tZ" type="range" />
-              <input id="tZn" type="number" class="num" />
-            </label>
-            <button id="resetXform" class="btn">↻ Reset move</button>
-          </details>
-
-          <details class="group">
-            <summary class="group-title">Phone color</summary>
-            <div class="swatches" id="swatches"></div>
-            <label class="row">
-              <span>Custom</span>
-              <input id="bodyColor" type="color" value="#4a4a50" />
-            </label>
-            <label class="row">
-              <span>Finish</span>
-              <input id="finish" type="range" min="0" max="1" step="0.01" value="0.42" />
-              <input id="finishN" type="number" class="num" min="0" max="1" step="0.01" value="0.42" />
-            </label>
-            <div class="hint-inline">Glossy ← → Matte</div>
-          </details>
-
-          <div class="status" id="status">Loading…</div>
-        </div>
         </div>
 
-        <div class="tab-panel" id="mockupsPanel" hidden>
-          <div class="panel-scroll">
-            <div id="cloudGroup">
-              <div class="mockup-list" id="mockupList"></div>
-            </div>
-            <div class="authnote" id="mockupsSignedOutNote" hidden>
-              Sign in to view and save your mockups.
-            </div>
+        <div class="statusbar">
+          <span class="status-dot"></span>
+          <span class="status" id="status">Loading…</span>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="mockupsPanel" hidden>
+        <div class="panel-scroll">
+          <div id="cloudGroup">
+            <div class="mockup-list" id="mockupList"></div>
+          </div>
+          <div class="authnote" id="mockupsSignedOutNote" hidden>
+            Sign in to view and save your mockups.
           </div>
         </div>
-      </aside>
-    </main>
+      </div>
+    </aside>
 
-    <!-- Device picker modal -->
+    <!-- ============ Device picker modal ============ -->
     <div class="modal" id="devicePickerModal" hidden>
       <div class="modal-box device-picker-box">
-        <div class="modal-title">Add Device</div>
+        <button id="devicePickerCancel" class="modal-close" aria-label="Close">
+          <svg class="i"><use href="#i-x" /></svg>
+        </button>
+        <div class="modal-title">Add a device</div>
+        <div class="modal-sub">Pick a device to drop into the scene.</div>
         <div class="device-picker-grid" id="devicePickerGrid"></div>
-        <div class="modal-actions">
-          <div class="spacer"></div>
-          <button id="devicePickerCancel" class="btn">Cancel</button>
-        </div>
       </div>
     </div>
 
-    <!-- Account modal -->
+    <!-- ============ Account modal ============ -->
     <div class="modal" id="authModal" hidden>
       <div class="modal-box auth-box">
-        <div class="modal-title">Account</div>
-        <input id="authEmail" class="field" type="email" placeholder="email" autocomplete="username" />
-        <input id="authPassword" class="field" type="password" placeholder="password" autocomplete="current-password" />
+        <button id="authClose" class="modal-close" aria-label="Close">
+          <svg class="i"><use href="#i-x" /></svg>
+        </button>
+        <div class="auth-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <rect x="6.5" y="3" width="11" height="18" rx="2.6" />
+          </svg>
+        </div>
+        <div class="modal-title center">Welcome to Mockup Studio</div>
+        <div class="modal-sub center">Sign in to sync mockups and uploads to the cloud.</div>
+        <input id="authEmail" class="field" type="email" placeholder="you@example.com" autocomplete="username" />
+        <input id="authPassword" class="field" type="password" placeholder="Password" autocomplete="current-password" />
         <div class="modes">
-          <button id="signIn" class="btn">Log in</button>
+          <button id="signIn" class="btn ghost">Log in</button>
           <button id="signUp" class="btn primary">Sign up</button>
         </div>
-        <div class="authnote" id="authNote"></div>
-        <div class="modal-actions">
-          <div class="spacer"></div>
-          <button id="authClose" class="btn">Close</button>
-        </div>
+        <div class="authnote center" id="authNote"></div>
       </div>
     </div>
 
-    <!-- Asset import / library modal -->
+    <!-- ============ Asset import / library modal ============ -->
     <div class="modal" id="assetModal" hidden>
       <div class="modal-box asset-lib-box">
+        <button id="assetModalClose" class="modal-close" aria-label="Close">
+          <svg class="i"><use href="#i-x" /></svg>
+        </button>
         <div class="modal-title" id="assetModalTitle">Import to screen</div>
         <div class="asset-tabs">
           <button class="asset-tab active" data-tab="upload" id="assetTabUpload">Upload</button>
-          <button class="asset-tab" data-tab="library" id="assetTabLibrary">Uploaded assets</button>
+          <button class="asset-tab" data-tab="library" id="assetTabLibrary">Library</button>
         </div>
 
         <div class="asset-tab-panel" id="assetUploadPanel">
           <div class="dropzone" id="assetDropzone">
-            <div class="dropzone-icon">⤒</div>
+            <div class="dropzone-icon"><svg class="i"><use href="#i-upload" /></svg></div>
             <div class="dropzone-text" id="dropzoneText">Drag &amp; drop an image or video here</div>
-            <button class="btn primary" id="assetPickBtn">Click to upload</button>
+            <button class="btn primary" id="assetPickBtn">Browse files</button>
             <input id="assetFileInput" type="file" hidden multiple />
           </div>
         </div>
@@ -206,15 +413,10 @@
           <div class="asset-grid" id="assetLibraryGrid"></div>
           <div class="authnote" id="assetLibraryNote"></div>
         </div>
-
-        <div class="modal-actions">
-          <div class="spacer"></div>
-          <button id="assetModalClose" class="btn">Close</button>
-        </div>
       </div>
     </div>
 
-    <!-- Video trim editor modal -->
+    <!-- ============ Video trim modal ============ -->
     <div class="modal" id="trimModal" hidden>
       <div class="modal-box trim-box">
         <div class="modal-title">Trim video</div>
@@ -232,19 +434,26 @@
           <span>End <strong id="trimEndLabel">0:00</strong></span>
         </div>
         <div class="modal-actions">
-          <button id="trimRemove" class="btn danger">🗑 Remove video</button>
-          <button id="trimRevert" class="btn">↺ Revert trim</button>
+          <button id="trimRemove" class="btn ghost danger">
+            <svg class="i"><use href="#i-trash" /></svg><span>Remove</span>
+          </button>
+          <button id="trimRevert" class="btn ghost">
+            <svg class="i"><use href="#i-reset" /></svg><span>Revert</span>
+          </button>
           <div class="spacer"></div>
-          <button id="trimCancel" class="btn">Cancel</button>
-          <button id="trimApply" class="btn primary">✂ Trim</button>
+          <button id="trimCancel" class="btn ghost">Cancel</button>
+          <button id="trimApply" class="btn primary">
+            <svg class="i"><use href="#i-scissors" /></svg><span>Trim</span>
+          </button>
         </div>
       </div>
     </div>
 
-    <!-- Save / crop modal -->
+    <!-- ============ Save / crop modal ============ -->
     <div class="modal" id="saveModal" hidden>
       <div class="modal-box">
-        <div class="modal-title">Crop &amp; save</div>
+        <div class="modal-title">Crop &amp; export</div>
+        <div class="modal-sub">Drag the frame to choose what gets exported.</div>
         <div class="crop-stage" id="cropStage">
           <img id="cropImg" alt="preview" draggable="false" />
           <div class="crop-box" id="cropBox">
@@ -255,10 +464,14 @@
           </div>
         </div>
         <div class="modal-actions">
-          <button id="cropReset" class="btn">Reset crop</button>
+          <button id="cropReset" class="btn ghost">
+            <svg class="i"><use href="#i-crop" /></svg><span>Reset crop</span>
+          </button>
           <div class="spacer"></div>
-          <button id="cropCancel" class="btn">Cancel</button>
-          <button id="cropDownload" class="btn primary">⤓ Download PNG</button>
+          <button id="cropCancel" class="btn ghost">Cancel</button>
+          <button id="cropDownload" class="btn primary">
+            <svg class="i"><use href="#i-download" /></svg><span id="cropDownloadLabel">Download PNG</span>
+          </button>
         </div>
       </div>
     </div>
