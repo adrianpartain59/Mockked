@@ -946,30 +946,41 @@ function fitBgPlane() {
   }
 }
 
-function setBackgroundFromAsset(asset) {
+// `pose` (optional) restores a saved {pos, quat} and skips auto-select — used
+// when reloading a project.
+function setBackgroundFromAsset(asset, pose = null) {
   ensureBgLayer();
-  new THREE.TextureLoader().load(
-    asset.url,
-    (tex) => {
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      if (bgLayer.texture) bgLayer.texture.dispose();
-      bgLayer.texture = tex;
-      bgLayer.asset = asset;
-      bgLayer.imageSize = { w: tex.image.width, h: tex.image.height };
-      bgLayer.material.map = tex;
-      bgLayer.material.needsUpdate = true;
-      bgLayer.active = true;
-      bgLayer.group.visible = true;
-      fitBgPlane();
-      renderDeviceBar();
-      selectBackground(); // select it so it can be moved/zoomed immediately
-      setStatus("Background applied. Use the Z control to zoom it in/out.");
-      render();
-    },
-    undefined,
-    () => setStatus("Couldn't load that background image.")
-  );
+  return new Promise((resolve) => {
+    new THREE.TextureLoader().load(
+      asset.url,
+      (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        if (bgLayer.texture) bgLayer.texture.dispose();
+        bgLayer.texture = tex;
+        bgLayer.asset = asset;
+        bgLayer.imageSize = { w: tex.image.width, h: tex.image.height };
+        bgLayer.material.map = tex;
+        bgLayer.material.needsUpdate = true;
+        bgLayer.active = true;
+        bgLayer.group.visible = true;
+        fitBgPlane();
+        if (pose) {
+          if (pose.pos) bgLayer.group.position.fromArray(pose.pos);
+          if (pose.quat) bgLayer.group.quaternion.fromArray(pose.quat);
+          renderDeviceBar();
+        } else {
+          renderDeviceBar();
+          selectBackground(); // select it so it can be moved/zoomed immediately
+          setStatus("Background applied. Use the Z control to zoom it in/out.");
+        }
+        render();
+        resolve();
+      },
+      undefined,
+      () => { setStatus("Couldn't load that background image."); resolve(); }
+    );
+  });
 }
 
 function clearBackground() {
@@ -999,48 +1010,60 @@ const imageLayers = [];
 let activeImageLayer = null;
 let imageLayerCounter = 0;
 
-function addImageLayerFromAsset(asset) {
-  new THREE.TextureLoader().load(
-    asset.url,
-    (tex) => {
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      const w = tex.image.width || 1;
-      const h = tex.image.height || 1;
-      const mat = new THREE.MeshBasicMaterial({
-        map: tex,
-        toneMapped: false,
-        side: THREE.DoubleSide,
-        transparent: true, // honour PNG alpha so cut-outs drop in cleanly
-      });
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
-      // Size to the native aspect ratio so nothing is stretched or cropped.
-      const aspect = w / h;
-      const planeW = aspect >= 1 ? IMG_LONG_EDGE : IMG_LONG_EDGE * aspect;
-      const planeH = aspect >= 1 ? IMG_LONG_EDGE / aspect : IMG_LONG_EDGE;
-      mesh.scale.set(planeW, planeH, 1);
-      const group = new THREE.Group();
-      group.position.set(0, 0, IMG_HOME_Z);
-      group.add(mesh);
-      scene.add(group);
-      const layer = {
-        id: ++imageLayerCounter,
-        group,
-        mesh,
-        material: mat,
-        texture: tex,
-        asset,
-        imageSize: { w, h },
-      };
-      imageLayers.push(layer);
-      selectImageLayer(layer);
-      renderDeviceBar();
-      setStatus("Image layer added. Move, rotate or zoom it freely — nothing is cropped.");
-      render();
-    },
-    undefined,
-    () => setStatus("Couldn't load that image.")
-  );
+// `pose` (optional) restores a saved {pos, quat, scale} instead of the default
+// placement + auto-select — used when reloading a project.
+function addImageLayerFromAsset(asset, pose = null) {
+  return new Promise((resolve) => {
+    new THREE.TextureLoader().load(
+      asset.url,
+      (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        const w = tex.image.width || 1;
+        const h = tex.image.height || 1;
+        const mat = new THREE.MeshBasicMaterial({
+          map: tex,
+          toneMapped: false,
+          side: THREE.DoubleSide,
+          transparent: true, // honour PNG alpha so cut-outs drop in cleanly
+        });
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+        // Size to the native aspect ratio so nothing is stretched or cropped.
+        const aspect = w / h;
+        const planeW = aspect >= 1 ? IMG_LONG_EDGE : IMG_LONG_EDGE * aspect;
+        const planeH = aspect >= 1 ? IMG_LONG_EDGE / aspect : IMG_LONG_EDGE;
+        mesh.scale.set(planeW, planeH, 1);
+        const group = new THREE.Group();
+        group.position.set(0, 0, IMG_HOME_Z);
+        group.add(mesh);
+        scene.add(group);
+        const layer = {
+          id: ++imageLayerCounter,
+          group,
+          mesh,
+          material: mat,
+          texture: tex,
+          asset,
+          imageSize: { w, h },
+        };
+        imageLayers.push(layer);
+        if (pose) {
+          if (pose.pos) group.position.fromArray(pose.pos);
+          if (pose.quat) group.quaternion.fromArray(pose.quat);
+          if (pose.scale) group.scale.fromArray(pose.scale);
+          renderDeviceBar();
+        } else {
+          selectImageLayer(layer);
+          renderDeviceBar();
+          setStatus("Image layer added. Move, rotate or zoom it freely — nothing is cropped.");
+        }
+        render();
+        resolve(layer);
+      },
+      undefined,
+      () => { setStatus("Couldn't load that image."); resolve(null); }
+    );
+  });
 }
 
 function selectImageLayer(layer) {
@@ -2432,27 +2455,142 @@ loadSharedPresets();
 // =====================================================================
 // Account (Supabase auth) + cloud-saved mockups (multi-device)
 // =====================================================================
-function getSceneState() {
-  return {
-    drama, // scene-wide lighting contrast
-    anim: tlSerialize(), // animation timeline (null when no keyframes)
-    devices: devices.map((d) => ({
+// A project save is fully self-contained: every distinct media blob it uses
+// (base screens, screen clips, image layers, background) is uploaded once to the
+// mockup's storage folder and referenced by a short key. Dedupe is by the source
+// object identity, so the same asset used in several places uploads only once.
+function makeMediaCollector(folder) {
+  const seen = new Map(); // dedup source (asset/blob) → manifest entry
+  const manifest = [];
+  let seq = 0;
+  async function ref(dedupObj, getBlob, kind, name, trim) {
+    if (!dedupObj) return null;
+    if (seen.has(dedupObj)) return seen.get(dedupObj).key;
+    const blob = await getBlob();
+    if (!blob) return null;
+    const key = "m" + seq++;
+    const ext = kind === "video" ? "webm" : "png";
+    const path = `${folder}/${key}.${ext}`;
+    const { error } = await supabase.storage
+      .from("mockups")
+      .upload(path, blob, { contentType: blob.type || undefined, upsert: true });
+    if (error) throw error;
+    const entry = { key, kind, name: name || key, trim: trim || null, path };
+    seen.set(dedupObj, entry);
+    manifest.push(entry);
+    return key;
+  }
+  return { ref, manifest };
+}
+
+// Build the complete, self-contained project state (uploading all media into
+// `folder`). Returns { settings, paths } — paths lists every uploaded blob so a
+// later update can clean up the ones it replaces.
+async function buildProjectState(folder) {
+  const { ref, manifest } = makeMediaCollector(folder);
+
+  const devs = [];
+  for (const d of devices) {
+    let screen = null;
+    if (d.screenIsVideo && d.screenVideoAsset) {
+      const k = await ref(d.screenVideoAsset, () => getAssetBlob(d.screenVideoAsset),
+        "video", d.screenVideoAsset.name, d.screenVideoAsset.trim);
+      if (k) screen = { mediaKey: k };
+    } else if (d.screenBlob) {
+      const k = await ref(d.screenBlob, async () => d.screenBlob, "image", "screen", null);
+      if (k) screen = { mediaKey: k };
+    }
+    devs.push({
       type: d.type.id,
       settings: { ...d.settings },
       pos: d.group.position.toArray(),
       rot: [d.group.rotation.x, d.group.rotation.y, d.group.rotation.z],
       scale: d.group.scale.toArray(),
-    })),
+      screen,
+    });
+  }
+
+  const screenClips = [];
+  for (const c of TL.screenClips) {
+    const k = await ref(c.asset, () => getAssetBlob(c.asset), c.asset.type, c.asset.name, c.asset.trim);
+    if (!k) continue;
+    screenClips.push({
+      dev: c.dev, start: c.start, dur: c.dur,
+      playIn: c.playIn ?? 0, playOut: c.playOut ?? null, loop: !!c.loop,
+      mediaKey: k,
+    });
+  }
+
+  const layers = [];
+  for (const l of imageLayers) {
+    const k = await ref(l.asset, () => getAssetBlob(l.asset), "image", l.asset.name, null);
+    if (!k) continue;
+    layers.push({
+      mediaKey: k,
+      pos: l.group.position.toArray(),
+      quat: l.group.quaternion.toArray(),
+      scale: l.group.scale.toArray(),
+    });
+  }
+
+  let background = null;
+  if (bgLayer.active && bgLayer.asset) {
+    const k = await ref(bgLayer.asset, () => getAssetBlob(bgLayer.asset), "image", bgLayer.asset.name, null);
+    if (k) background = {
+      mediaKey: k,
+      pos: bgLayer.group.position.toArray(),
+      quat: bgLayer.group.quaternion.toArray(),
+    };
+  }
+
+  const settings = {
+    v: 2,
+    drama, // scene-wide lighting contrast
+    camera: { pos: camera.position.toArray(), target: controls.target.toArray() },
+    media: manifest,
+    devices: devs,
+    anim: tlSerialize(),   // keyframes + animation clips (no media)
+    screenClips,           // screen media clips (reference media keys)
+    imageLayers: layers,
+    background,
   };
+  return { settings, paths: manifest.map((m) => m.path) };
+}
+
+// Download a project's media manifest into in-memory session assets, keyed by
+// `key`. Fetching the blobs now (not just signed URLs) makes the loaded project
+// self-contained: playback uses stable object URLs and a later re-save reuses
+// the blobs without depending on signed-URL expiry.
+async function loadMediaManifest(media) {
+  const byKey = new Map();
+  for (const m of media || []) {
+    try {
+      const { data } = await supabase.storage.from("mockups").createSignedUrl(m.path, 3600);
+      if (!data?.signedUrl) continue;
+      const blob = await (await fetch(data.signedUrl)).blob();
+      byKey.set(m.key, {
+        id: null, name: m.name || m.key, type: m.kind === "video" ? "video" : "image",
+        url: URL.createObjectURL(blob), blob, path: null, remote: false, trim: m.trim || null,
+      });
+    } catch { /* skip a missing media item rather than failing the whole load */ }
+  }
+  return byKey;
 }
 
 async function applySceneState(state, imagePaths) {
   if (!state) return;
   setDrama(state.drama ?? DEFAULT_DRAMA); // restore lighting (default for old saves)
-  // Clear existing devices.
+
+  // Tear down the current scene. Clear image layers + background first (removing
+  // them can re-select the active device), then the devices themselves.
+  for (const l of [...imageLayers]) removeImageLayer(l);
+  if (bgLayer.active) clearBackground();
   for (const d of [...devices]) { stopDeviceVideo(d); scene.remove(d.group); }
   devices.length = 0;
   deviceTypeCounts.clear();
+
+  // v2 saves carry a media manifest; v1 saves only had per-device imagePaths.
+  const media = state.v >= 2 ? await loadMediaManifest(state.media) : null;
 
   for (let i = 0; i < (state.devices?.length || 0); i++) {
     const ds = state.devices[i];
@@ -2468,19 +2606,51 @@ async function applySceneState(state, imagePaths) {
     if (Array.isArray(ds.pos)) dev.group.position.fromArray(ds.pos);
     if (Array.isArray(ds.rot)) dev.group.rotation.set(ds.rot[0], ds.rot[1], ds.rot[2]);
     if (Array.isArray(ds.scale)) dev.group.scale.fromArray(ds.scale);
-    const path = imagePaths?.[i];
-    if (path) {
-      const { data } = await supabase.storage.from("mockups").createSignedUrl(path, 3600);
-      if (data?.signedUrl) {
-        const blob = await (await fetch(data.signedUrl)).blob();
-        applyScreenBlobToDevice(dev, blob);
+
+    // Base screen: v2 references the manifest (image or video); v1 used imagePaths.
+    if (media && ds.screen?.mediaKey) {
+      const a = media.get(ds.screen.mediaKey);
+      if (a?.type === "video") applyScreenVideoToDevice(dev, a);
+      else if (a) applyScreenBlobToDevice(dev, await getAssetBlob(a));
+    } else if (!media) {
+      const path = imagePaths?.[i];
+      if (path) {
+        const { data } = await supabase.storage.from("mockups").createSignedUrl(path, 3600);
+        if (data?.signedUrl) applyScreenBlobToDevice(dev, await (await fetch(data.signedUrl)).blob());
       }
     }
   }
+
+  // Image layers + background (v2 only).
+  for (const l of state.imageLayers || []) {
+    const a = media?.get(l.mediaKey);
+    if (a) await addImageLayerFromAsset(a, { pos: l.pos, quat: l.quat, scale: l.scale });
+  }
+  if (state.background) {
+    const a = media?.get(state.background.mediaKey);
+    if (a) await setBackgroundFromAsset(a, { pos: state.background.pos, quat: state.background.quat });
+  }
+
+  // Camera (v2; older saves leave the current framing).
+  if (state.camera?.pos && state.camera?.target) {
+    camera.position.fromArray(state.camera.pos);
+    controls.target.fromArray(state.camera.target);
+    camera.lookAt(controls.target);
+  }
+
   selectDevice(devices[0]);
   renderDeviceBar();
-  tlRestore(state.anim);
+
+  // Restore the timeline, resolving each screen clip's media from the manifest.
+  const anim = state.anim ? { ...state.anim } : (state.screenClips ? {} : null);
+  if (anim && media && state.screenClips) {
+    anim.screenClips = state.screenClips
+      .map((c) => ({ ...c, asset: media.get(c.mediaKey) }))
+      .filter((c) => c.asset);
+  }
+  tlRestore(anim);
   updateSaveButtonLabel();
+  render();
 }
 
 const headerSignedOut = $("headerSignedOut");
@@ -2563,42 +2733,35 @@ $("saveCloud").addEventListener("click", async () => {
   const name = projectTitle.value.trim() || "Untitled";
   setStatus("Saving mockup…");
 
-  // Upload each device's screen image (if any), collecting paths in order.
-  const imagePaths = [];
-  for (const d of devices) {
-    if (d.screenBlob) {
-      const path = `${user.id}/${crypto.randomUUID()}.png`;
-      const { error: upErr } = await supabase.storage
-        .from("mockups")
-        .upload(path, d.screenBlob, { contentType: d.screenBlob.type || "image/png", upsert: true });
-      if (upErr) return setStatus("Image upload failed: " + upErr.message);
-      imagePaths.push(path);
-    } else {
-      imagePaths.push(null);
-    }
+  // Upload all media into a fresh per-save folder, then build the full state.
+  const folder = `${user.id}/${crypto.randomUUID()}`;
+  let settings, paths;
+  try {
+    ({ settings, paths } = await buildProjectState(folder));
+  } catch (err) {
+    return setStatus("Save failed while uploading media: " + (err.message || err));
   }
 
-  const settings = { ...getSceneState(), imagePaths };
   const row = {
     user_id: user.id,
     name: name || "Untitled",
     settings,
-    image_path: imagePaths.find(Boolean) || null,
+    image_path: paths[0] || null, // first media doubles as a thumbnail reference
   };
 
   // Update the project we're already editing; otherwise create a new one.
   if (currentMockup?.id) {
     const { error } = await supabase.from("mockups").update(row).eq("id", currentMockup.id);
     if (error) return setStatus("Save failed: " + error.message);
-    // The fresh upload replaced the old screen images; remove the orphans.
-    const stale = (currentMockup.paths || []).filter((p) => p && !imagePaths.includes(p));
+    // Fresh folder replaced the old media; remove the previous files.
+    const stale = (currentMockup.paths || []).filter((p) => p && !paths.includes(p));
     if (stale.length) await supabase.storage.from("mockups").remove(stale);
-    currentMockup.paths = imagePaths.filter(Boolean);
+    currentMockup.paths = paths;
     setStatus(`Updated “${name || "Untitled"}”.`);
   } else {
     const { data, error } = await supabase.from("mockups").insert(row).select("id").single();
     if (error) return setStatus("Save failed: " + error.message);
-    currentMockup = { id: data.id, paths: imagePaths.filter(Boolean) };
+    currentMockup = { id: data.id, paths };
     setStatus(`Saved “${name || "Untitled"}”.`);
   }
   refreshMockups();
@@ -2640,20 +2803,26 @@ function renderMockupList(rows) {
   }
 }
 
+// Every storage path a saved mockup owns (v2 media manifest, or v1 imagePaths).
+function mockupStoragePaths(s) {
+  if (Array.isArray(s?.media)) return s.media.map((m) => m.path).filter(Boolean);
+  return (s?.imagePaths || []).filter(Boolean);
+}
+
 async function loadMockup(row) {
   setStatus(`Loading “${row.name}”…`);
   const s = row.settings || {};
   await applySceneState(s, s.imagePaths);
   // Remember it so the next Save updates this project instead of duplicating it,
   // and sync the header title to match.
-  currentMockup = { id: row.id, paths: (s.imagePaths || []).filter(Boolean) };
+  currentMockup = { id: row.id, paths: mockupStoragePaths(s) };
   projectTitle.value = row.name || "Untitled";
   setStatus(`Loaded “${row.name}”.`);
 }
 
 async function deleteMockup(row) {
   if (!confirm(`Delete “${row.name}”?`)) return;
-  const paths = (row.settings?.imagePaths || []).filter(Boolean);
+  const paths = mockupStoragePaths(row.settings);
   if (paths.length) await supabase.storage.from("mockups").remove(paths);
   const { error } = await supabase.from("mockups").delete().eq("id", row.id);
   if (error) return setStatus("Delete failed: " + error.message);
@@ -3128,10 +3297,12 @@ function tlApplyScreens(t) {
         tlRestoreBaseScreen(dev);
       }
     }
-    // Drive an active video clip from the playhead. By default the clip plays
-    // through ONCE from its start and then holds the last frame for the rest of
-    // the bar (great for "video kicks in at this beat, then freezes"); set the
-    // clip to loop to repeat it within the bar instead.
+    // Drive an active video clip from the playhead. The video only advances
+    // inside its "play range" [playIn, playOut] (relative to the clip start):
+    // it holds the first frame before playIn, rolls through the range, then
+    // holds whatever frame it reached after playOut — so you get a frozen poster
+    // until the video kicks in, and a frozen frame wherever it stops. Loop mode
+    // ignores the range and repeats across the whole clip.
     if (clip && clip.asset.type === "video" && dev.screenVideo && dev.screenVideo.readyState >= 1) {
       const v = dev.screenVideo;
       v.loop = !!clip.loop;
@@ -3140,10 +3311,19 @@ function tlApplyScreens(t) {
       const end = tr?.end ?? v.duration ?? Infinity;
       const span = Math.max(0.01, end - s0);
       const local = Math.max(0, t - clip.start);
-      const finished = !clip.loop && local >= span; // played through, now frozen
-      const wantT = clip.loop ? s0 + (local % span) : s0 + Math.min(local, span - 0.001);
-      if (finished || (!TL.playing && !exporting)) {
-        // Frozen frame, or paused scrubbing: seek exactly, keep paused.
+      let wantT, rolling;
+      if (clip.loop) {
+        wantT = s0 + (local % span);
+        rolling = true;
+      } else {
+        const pIn = Math.max(0, clip.playIn ?? 0);
+        const pOut = clip.playOut == null ? Infinity : Math.max(pIn, clip.playOut);
+        const rolled = Math.min(Math.max(0, local - pIn), pOut - pIn, span - 0.001);
+        wantT = s0 + rolled;
+        rolling = local > pIn && local < pOut && rolled < span - 0.001;
+      }
+      if (!rolling || (!TL.playing && !exporting)) {
+        // Held frame, or paused scrubbing: seek exactly, keep paused.
         if (Math.abs(v.currentTime - wantT) > 0.04) v.currentTime = wantT;
         if (!v.paused) v.pause();
       } else if (exporting) {
@@ -3247,6 +3427,8 @@ function tlSyncClipTools() {
   if (vClip) {
     $("tlClipLoop").classList.toggle("active", !!vClip.loop);
     $("tlClipLoopLabel").textContent = vClip.loop ? "Loops" : "Plays once";
+    // Play-range controls only make sense for play-once (not loop).
+    $("tlPlayRange").hidden = !!vClip.loop;
   }
 }
 
@@ -3372,10 +3554,55 @@ $("tlClipLoop").addEventListener("click", () => {
   if (!c || !TL.screenClips.includes(c) || c.asset.type !== "video") return;
   c.loop = !c.loop;
   tlSyncClipTools();
+  tlRenderLane();
   tlApplyU(TL.time / TL.duration); // recompute playback for the new mode
   setStatus(c.loop
     ? "Screen video loops within its clip."
-    : "Screen video plays once, then holds the last frame.");
+    : "Screen video plays once through its play range, holding a frame before and after.");
+});
+
+// The selected video clip, or null. Helper for the play-range buttons.
+function tlSelVideoClip() {
+  const c = TL.selClip;
+  return c && TL.screenClips.includes(c) && c.asset.type === "video" && !c.loop ? c : null;
+}
+
+// "Play from here": hold the first frame until the playhead, then roll.
+$("tlSetPlayIn").addEventListener("click", () => {
+  const c = tlSelVideoClip();
+  if (!c) return;
+  const local = TL.time - c.start;
+  if (local < -0.01 || local > c.dur + 0.01) return setStatus("Move the playhead inside the clip first.");
+  const pOut = c.playOut == null ? c.dur : c.playOut;
+  c.playIn = THREE.MathUtils.clamp(Math.round(local * 100) / 100, 0, Math.max(0, pOut - 0.1));
+  tlRenderLane();
+  tlApplyU(TL.time / TL.duration);
+  setStatus(c.playIn > 0.01
+    ? `Video holds its first frame until ${(c.start + c.playIn).toFixed(2)}s, then plays.`
+    : "Video plays from the clip start.");
+});
+
+// "Freeze here": roll up to the playhead, then hold that frame.
+$("tlSetPlayOut").addEventListener("click", () => {
+  const c = tlSelVideoClip();
+  if (!c) return;
+  const local = TL.time - c.start;
+  if (local < -0.01 || local > c.dur + 0.01) return setStatus("Move the playhead inside the clip first.");
+  c.playOut = THREE.MathUtils.clamp(Math.round(local * 100) / 100, (c.playIn || 0) + 0.1, c.dur);
+  tlRenderLane();
+  tlApplyU(TL.time / TL.duration);
+  setStatus(`Video freezes at ${(c.start + c.playOut).toFixed(2)}s and holds that frame.`);
+});
+
+// Reset: play the whole video once, no held zones.
+$("tlResetPlay").addEventListener("click", () => {
+  const c = tlSelVideoClip();
+  if (!c) return;
+  c.playIn = 0;
+  c.playOut = null;
+  tlRenderLane();
+  tlApplyU(TL.time / TL.duration);
+  setStatus("Play range reset — the video plays through once.");
 });
 tlScrollEl.addEventListener("wheel", (e) => {
   if (!e.ctrlKey && !e.metaKey) return;
@@ -3450,6 +3677,30 @@ function tlRenderLane() {
       const h = document.createElement("span");
       h.className = `h ${side}`;
       el.appendChild(h);
+    }
+    // Play-range overlay for once-mode video clips: dim the held-frame zones and
+    // flag the play/freeze points. Only drawn when the range is non-default, so
+    // an untouched clip stays clean.
+    if (TL.lane === "screen" && c.asset.type === "video" && !c.loop) {
+      const pIn = Math.max(0, c.playIn || 0);
+      if (pIn > 0.01) {
+        const hold = document.createElement("div");
+        hold.className = "hold l";
+        hold.style.width = (pIn / c.dur * 100) + "%";
+        const mk = document.createElement("div");
+        mk.className = "tl-pmark in";
+        mk.style.left = (pIn / c.dur * 100) + "%";
+        el.append(hold, mk);
+      }
+      if (c.playOut != null && c.playOut < c.dur - 0.01) {
+        const hold = document.createElement("div");
+        hold.className = "hold r";
+        hold.style.width = ((c.dur - c.playOut) / c.dur * 100) + "%";
+        const mk = document.createElement("div");
+        mk.className = "tl-pmark out";
+        mk.style.left = (c.playOut / c.dur * 100) + "%";
+        el.append(hold, mk);
+      }
     }
     tlLaneEl.appendChild(el);
   }
@@ -3552,7 +3803,9 @@ async function tlAddScreenClip(asset) {
     : 2;
   const start = tlPlaceStart(TL.screenClips, i, dur);
   // Videos default to play-once-then-hold; images have no playback so loop is N/A.
-  const clip = { id: ++_tlClipSeq, dev: i, asset, start, dur, loop: false };
+  // playIn / playOut are the play range (rel. to clip start): default plays the
+  // whole video (playOut = null → to its natural end).
+  const clip = { id: ++_tlClipSeq, dev: i, asset, start, dur, loop: false, playIn: 0, playOut: null };
   TL.screenClips.push(clip);
   tlFitDuration();
   TL.lane = "screen";
@@ -3645,6 +3898,11 @@ function laneDragEnd() {
   const d = _laneDrag;
   _laneDrag = null;
   if (d.moved) {
+    // Keep a video clip's play range inside the (possibly resized) bar.
+    if (d.c.asset?.type === "video") {
+      d.c.playIn = THREE.MathUtils.clamp(d.c.playIn || 0, 0, d.c.dur);
+      if (d.c.playOut != null) d.c.playOut = THREE.MathUtils.clamp(d.c.playOut, d.c.playIn, d.c.dur);
+    }
     tlFitDuration();
     tlRefresh();
     tlApplyU(TL.time / TL.duration);
@@ -3840,13 +4098,22 @@ function tlRestore(a) {
   TL.selected = null;
   TL.selClip = null;
   TL.screenClips = [];
-  if (a && (Array.isArray(a.keyframes) || Array.isArray(a.clips))) {
+  if (a && (Array.isArray(a.keyframes) || Array.isArray(a.clips) || Array.isArray(a.screenClips))) {
     TL.duration = THREE.MathUtils.clamp(a.duration || 5, 1, 60);
     TL.loop = a.loop !== false;
     TL.keyframes = tlClone(a.keyframes || []);
     TL.clips = (a.clips || [])
       .filter((c) => clipPreset(c.preset))
       .map((c) => ({ id: ++_tlClipSeq, dev: c.dev | 0, preset: c.preset, start: +c.start || 0, dur: Math.max(0.2, +c.dur || 1) }));
+    // Screen clips arrive with their media already resolved to a session asset.
+    TL.screenClips = (a.screenClips || [])
+      .filter((c) => c.asset)
+      .map((c) => ({
+        id: ++_tlClipSeq, dev: c.dev | 0, asset: c.asset,
+        start: +c.start || 0, dur: Math.max(0.2, +c.dur || 1),
+        playIn: +c.playIn || 0, playOut: c.playOut == null ? null : +c.playOut,
+        loop: !!c.loop,
+      }));
     TL.rest = a.rest ? tlClone(a.rest) : null;
     tlSort();
   } else {

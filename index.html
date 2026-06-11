@@ -217,8 +217,22 @@
           </button>
         </div>
         <div class="tl-key-tools" id="tlClipTools" hidden>
+          <span class="tl-playrange" id="tlPlayRange">
+            <button class="tl-btn" id="tlSetPlayIn"
+              title="Play from here — move the playhead to where the video should start, then click. It holds the first frame until then.">
+              <svg class="i"><use href="#i-play" /></svg>
+            </button>
+            <button class="tl-btn" id="tlSetPlayOut"
+              title="Freeze here — move the playhead to where the video should stop, then click. It holds that frame afterwards.">
+              <svg class="i"><use href="#i-pause" /></svg>
+            </button>
+            <button class="tl-btn" id="tlResetPlay" title="Reset play range — play the whole video once">
+              <svg class="i"><use href="#i-reset" /></svg>
+            </button>
+            <span class="tl-sep"></span>
+          </span>
           <button class="btn ghost mini" id="tlClipLoop"
-            title="Off: the video plays once when the clip starts, then holds the last frame. On: it loops within the clip.">
+            title="Off: the video plays through its play range, holding a frame before and after. On: it loops across the whole clip.">
             <svg class="i"><use href="#i-repeat" /></svg><span id="tlClipLoopLabel">Plays once</span>
           </button>
         </div>

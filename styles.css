@@ -638,6 +638,63 @@ html, body {
 }
 .tl-clip.media .x { position: relative; z-index: 1; margin-right: 5px; }
 
+/* Play range: held-frame zones dim the bar; markers flag the play/freeze points. */
+.tl-clip .hold {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  background: rgba(0, 0, 0, 0.62);
+  pointer-events: none;
+  /* diagonal hatch hints "this frame is held, not playing" */
+  background-image: repeating-linear-gradient(
+    -45deg, transparent 0 4px, rgba(255, 255, 255, 0.05) 4px 8px);
+}
+.tl-clip .hold.l { left: 0; border-radius: 6px 0 0 6px; }
+.tl-clip .hold.r { right: 0; border-radius: 0 6px 6px 0; }
+.tl-pmark {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  z-index: 3;
+  pointer-events: none;
+}
+.tl-pmark::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: #fff;
+}
+.tl-pmark::after {
+  content: "";
+  position: absolute;
+  top: -1px;
+  width: 12px;
+  height: 11px;
+  background: #fff center / 8px no-repeat;
+}
+.tl-pmark.in::after {
+  left: 0;
+  border-radius: 3px 3px 3px 0;
+  /* play glyph */
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="black"><polygon points="7 5 19 12 7 19"/></svg>');
+}
+.tl-pmark.out::after {
+  right: 0;
+  border-radius: 3px 3px 0 3px;
+  /* pause/freeze glyph */
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="black"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>');
+}
+
+/* Contextual play-range buttons (shown for a selected once-mode video clip) */
+.tl-playrange { display: inline-flex; align-items: center; gap: 2px; }
+.tl-playrange .tl-sep { margin: 0 4px; }
+
 .tl-ruler {
   position: relative;
   height: 17px;

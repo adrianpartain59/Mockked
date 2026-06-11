@@ -57,12 +57,14 @@ A local server is required (the browser can't load the `.glb`/`.exr` over `file:
     bring their own natural duration and the timeline auto-extends to fit.
   - **Screen media clips** (Screen lane) — sequence images/videos on a device's
     screen over time via **＋ Add media**; the bar shows the media thumbnail and
-    the screen reverts to its base content outside the clips. A **video clip
-    plays once** from the moment its bar starts, then **holds its last frame**
-    for the rest of the bar — so to make a video kick in at a beat and then
-    freeze, drop the clip at that point and stretch its right edge. Selecting a
-    video clip reveals a **Plays once / Loops** toggle in the toolbar if you'd
-    rather it repeat within the bar.
+    the screen reverts to its base content outside the clips. A video clip has a
+    **play range**: it holds its first frame until the range starts, rolls
+    through, then holds the frame it reached. Select the clip and use the
+    toolbar's **Play from here** / **Freeze here** buttons (they set the range to
+    the playhead) — so you can delay the start (frozen poster until a beat) or
+    freeze on any frame mid-clip; the reset button restores play-through, and the
+    **Plays once / Loops** toggle switches to repeating. The held zones are shown
+    dimmed on the bar with play/freeze markers.
   - **Scene keyframes** (diamonds on the track) — manual whole-scene snapshots:
     pose, press **Add keyframe** (`K`), move the playhead, pose again. Tweens
     use quaternion slerp with per-keyframe easing. Keyframe times are
