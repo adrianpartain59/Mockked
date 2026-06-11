@@ -759,6 +759,7 @@ function applyScreenVideoToDevice(dev, asset) {
   // rewind has to keep the element playing: at the true end of an untrimmed clip
   // the browser fires `ended` and pauses, so we also restart on `ended`.
   const restartIfNeeded = () => {
+    if (dev._screenClipId != null) return; // a timeline clip owns playback
     const tr = dev.screenVideoAsset?.trim;
     const start = tr?.start ?? 0;
     const end = tr?.end ?? (video.duration || Infinity);
@@ -769,6 +770,7 @@ function applyScreenVideoToDevice(dev, asset) {
   };
   video.addEventListener("timeupdate", restartIfNeeded);
   video.addEventListener("ended", () => {
+    if (dev._screenClipId != null) return; // a timeline clip owns playback
     const start = dev.screenVideoAsset?.trim?.start ?? 0;
     video.currentTime = start;
     video.play().catch(() => {});
@@ -3126,19 +3128,34 @@ function tlApplyScreens(t) {
         tlRestoreBaseScreen(dev);
       }
     }
-    // Keep an active video clip locked to the playhead.
+    // Drive an active video clip from the playhead. By default the clip plays
+    // through ONCE from its start and then holds the last frame for the rest of
+    // the bar (great for "video kicks in at this beat, then freezes"); set the
+    // clip to loop to repeat it within the bar instead.
     if (clip && clip.asset.type === "video" && dev.screenVideo && dev.screenVideo.readyState >= 1) {
+      const v = dev.screenVideo;
+      v.loop = !!clip.loop;
       const tr = clip.asset.trim;
       const s0 = tr?.start ?? 0;
-      const end = tr?.end ?? dev.screenVideo.duration ?? Infinity;
+      const end = tr?.end ?? v.duration ?? Infinity;
       const span = Math.max(0.01, end - s0);
-      const wantT = s0 + ((t - clip.start) % span);
-      if (!TL.playing && !exporting) {
-        if (Math.abs(dev.screenVideo.currentTime - wantT) > 0.08) dev.screenVideo.currentTime = wantT;
-        if (!dev.screenVideo.paused) dev.screenVideo.pause();
-      } else if (dev.screenVideo.paused) {
-        dev.screenVideo.currentTime = wantT;
-        dev.screenVideo.play().catch(() => {});
+      const local = Math.max(0, t - clip.start);
+      const finished = !clip.loop && local >= span; // played through, now frozen
+      const wantT = clip.loop ? s0 + (local % span) : s0 + Math.min(local, span - 0.001);
+      if (finished || (!TL.playing && !exporting)) {
+        // Frozen frame, or paused scrubbing: seek exactly, keep paused.
+        if (Math.abs(v.currentTime - wantT) > 0.04) v.currentTime = wantT;
+        if (!v.paused) v.pause();
+      } else if (exporting) {
+        // Frame-stepped export: seek precisely each frame.
+        v.currentTime = wantT;
+        if (!v.paused) v.pause();
+      } else if (v.paused) {
+        // Real-time preview playback: start from the right offset and let it run.
+        v.currentTime = wantT;
+        v.play().catch(() => {});
+      } else if (Math.abs(v.currentTime - wantT) > 0.2) {
+        v.currentTime = wantT; // correct drift
       }
     }
   });
@@ -3217,8 +3234,20 @@ function tlRefresh() {
   if (TL.selected) $("tlEasing").value = TL.selected.easing;
   $("tlAddKeyLabel").textContent =
     tlFindNear(THREE.MathUtils.clamp(TL.time / TL.duration, 0, 1)) ? "Update keyframe" : "Add keyframe";
+  tlSyncClipTools();
   updateSaveButtonLabel();
   tlRenderLane();
+}
+
+// The per-clip loop toggle appears only for a selected screen *video* clip.
+function tlSyncClipTools() {
+  const vClip = TL.selClip && TL.screenClips.includes(TL.selClip) && TL.selClip.asset.type === "video"
+    ? TL.selClip : null;
+  $("tlClipTools").hidden = !vClip;
+  if (vClip) {
+    $("tlClipLoop").classList.toggle("active", !!vClip.loop);
+    $("tlClipLoopLabel").textContent = vClip.loop ? "Loops" : "Plays once";
+  }
 }
 
 // Reposition keyframe markers from data without rebuilding (mid-drag).
@@ -3338,6 +3367,16 @@ $("tlSnap").addEventListener("click", () => {
   $("tlSnap").classList.toggle("active", TL.snap);
   setStatus(TL.snap ? "Snapping on — clips snap to ¼/½/1-second grid." : "Snapping off — free clip placement.");
 });
+$("tlClipLoop").addEventListener("click", () => {
+  const c = TL.selClip;
+  if (!c || !TL.screenClips.includes(c) || c.asset.type !== "video") return;
+  c.loop = !c.loop;
+  tlSyncClipTools();
+  tlApplyU(TL.time / TL.duration); // recompute playback for the new mode
+  setStatus(c.loop
+    ? "Screen video loops within its clip."
+    : "Screen video plays once, then holds the last frame.");
+});
 tlScrollEl.addEventListener("wheel", (e) => {
   if (!e.ctrlKey && !e.metaKey) return;
   e.preventDefault();
@@ -3431,6 +3470,7 @@ function tlSelectClip(c) {
   tlLaneEl.querySelectorAll(".tl-clip").forEach((el) => {
     el.classList.toggle("selected", !!c && +el.dataset.id === c.id);
   });
+  tlSyncClipTools();
 }
 
 function tlRemoveClip(c) {
@@ -3511,7 +3551,8 @@ async function tlAddScreenClip(asset) {
     ? Math.max(0.5, ((asset.trim?.end ?? 0) - (asset.trim?.start ?? 0)) || 3)
     : 2;
   const start = tlPlaceStart(TL.screenClips, i, dur);
-  const clip = { id: ++_tlClipSeq, dev: i, asset, start, dur };
+  // Videos default to play-once-then-hold; images have no playback so loop is N/A.
+  const clip = { id: ++_tlClipSeq, dev: i, asset, start, dur, loop: false };
   TL.screenClips.push(clip);
   tlFitDuration();
   TL.lane = "screen";
