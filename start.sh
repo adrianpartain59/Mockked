@@ -17,7 +17,7 @@ if lsof -ti tcp:"${PORT}" >/dev/null 2>&1; then
 fi
 
 echo "iPhone Mockup Generator → ${URL}"
-"${PY}" -m http.server "${PORT}" >/dev/null 2>&1 &
+"${PY}" server.py "${PORT}" >/dev/null 2>&1 &
 SERVER_PID=$!
 trap 'echo; kill ${SERVER_PID} 2>/dev/null; exit 0' INT TERM
 

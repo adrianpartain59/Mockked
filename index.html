@@ -67,6 +67,9 @@
         <symbol id="i-x" viewBox="0 0 24 24">
           <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
         </symbol>
+        <symbol id="i-edit" viewBox="0 0 24 24">
+          <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+        </symbol>
         <symbol id="i-scissors" viewBox="0 0 24 24">
           <circle cx="6" cy="6" r="3" /><circle cx="6" cy="18" r="3" />
           <line x1="20" y1="4" x2="8.12" y2="15.88" /><line x1="14.47" y1="14.48" x2="20" y2="20" />
@@ -167,23 +170,6 @@
       </div>
     </header>
 
-    <!-- ============ Floating left tool rail ============ -->
-    <nav class="toolrail" aria-label="Tools">
-      <button class="rail-btn mode active" data-mode="translate" id="modeTranslate"
-        data-tip="Move" data-key="W">
-        <svg class="i"><use href="#i-move" /></svg>
-      </button>
-      <button class="rail-btn mode" data-mode="rotate" id="modeRotate"
-        data-tip="Rotate" data-key="E">
-        <svg class="i"><use href="#i-rotate" /></svg>
-      </button>
-      <span class="rail-sep"></span>
-      <label class="rail-btn rail-toggle" data-tip="Show gizmo">
-        <input id="gizmoToggle" type="checkbox" checked class="sr-only" />
-        <svg class="i"><use href="#i-eye" /></svg>
-      </label>
-    </nav>
-
     <!-- ============ Animation timeline dock ============ -->
     <section class="timeline" aria-label="Animation timeline">
       <div class="timeline-bar">
@@ -217,6 +203,9 @@
           </button>
         </div>
         <div class="tl-key-tools" id="tlClipTools" hidden>
+          <button class="btn ghost mini" id="tlClipEdit" title="Edit clip — trim and timing (or double-click the clip)">
+            <svg class="i"><use href="#i-edit" /></svg><span>Edit</span>
+          </button>
           <span class="tl-playrange" id="tlPlayRange">
             <button class="tl-btn" id="tlSetPlayIn"
               title="Play from here — move the playhead to where the video should start, then click. It holds the first frame until then.">
@@ -243,7 +232,7 @@
           <svg class="i"><use href="#i-magnet" /></svg>
         </button>
         <span class="tl-sep"></span>
-        <div class="tl-zoom" title="Timeline zoom (⌘ + scroll on the timeline)">
+        <div class="tl-zoom" title="Timeline zoom (scroll on the timeline)">
           <button class="tl-btn" id="tlZoomOut" title="Zoom out">
             <svg class="i"><use href="#i-minus" /></svg>
           </button>
@@ -354,6 +343,20 @@
           <details class="group" open>
             <summary class="group-title">Transform</summary>
             <div class="group-body">
+              <div class="xform-tools">
+                <button class="xform-btn mode active" data-mode="translate" id="modeTranslate"
+                  data-key="W" title="Move (W)">
+                  <svg class="i"><use href="#i-move" /></svg><span>Move</span>
+                </button>
+                <button class="xform-btn mode" data-mode="rotate" id="modeRotate"
+                  data-key="E" title="Rotate (E)">
+                  <svg class="i"><use href="#i-rotate" /></svg><span>Rotate</span>
+                </button>
+                <label class="xform-btn rail-toggle" title="Toggle gizmo">
+                  <input id="gizmoToggle" type="checkbox" checked class="sr-only" />
+                  <svg class="i"><use href="#i-eye" /></svg><span>Gizmo</span>
+                </label>
+              </div>
               <label class="row axis">
                 <span class="axis-chip x">X</span>
                 <input id="tX" type="range" />
@@ -383,12 +386,6 @@
                 <span class="row-label">Custom</span>
                 <input id="bodyColor" type="color" value="#4a4a50" />
               </label>
-              <label class="row">
-                <span class="row-label">Finish</span>
-                <input id="finish" type="range" min="0" max="1" step="0.01" value="0.42" />
-                <input id="finishN" type="number" class="num" min="0" max="1" step="0.01" value="0.42" />
-              </label>
-              <div class="range-caption"><span>Glossy</span><span>Matte</span></div>
             </div>
           </details>
 
@@ -526,6 +523,47 @@
       </div>
     </div>
 
+    <!-- ============ Clip edit modal (timeline clips) ============ -->
+    <div class="modal" id="clipEditModal" hidden>
+      <div class="modal-box trim-box">
+        <div class="modal-title" id="clipEditTitle">Edit clip</div>
+        <div class="modal-sub" id="clipEditSub"></div>
+        <div class="trim-stage" id="clipEditStage">
+          <video id="clipEditVideo" muted playsinline></video>
+        </div>
+        <div class="clip-edit-trim" id="clipEditTrimWrap">
+          <div class="trim-track" id="clipEditTrack">
+            <div class="trim-range" id="clipEditRange"></div>
+            <div class="trim-playhead" id="clipEditPlayhead"></div>
+            <div class="trim-handle start" id="clipEditStartHandle" data-h="start"></div>
+            <div class="trim-handle end" id="clipEditEndHandle" data-h="end"></div>
+          </div>
+          <div class="trim-times">
+            <span>Trim in <strong id="clipEditStartLabel">0:00</strong></span>
+            <span>Trim out <strong id="clipEditEndLabel">0:00</strong></span>
+          </div>
+        </div>
+        <div class="clip-edit-fields">
+          <label title="When the clip begins on the timeline">Starts at
+            <input id="clipEditStart" type="number" class="num" min="0" step="0.1" /> s
+          </label>
+          <label title="How long the clip stays on the timeline">Duration
+            <input id="clipEditDur" type="number" class="num" min="0.2" step="0.1" /> s
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button id="clipEditDelete" class="btn ghost danger">
+            <svg class="i"><use href="#i-trash" /></svg><span>Remove clip</span>
+          </button>
+          <div class="spacer"></div>
+          <button id="clipEditCancel" class="btn ghost">Cancel</button>
+          <button id="clipEditApply" class="btn primary">
+            <svg class="i"><use href="#i-scissors" /></svg><span>Apply</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- ============ Save / crop modal ============ -->
     <div class="modal" id="saveModal" hidden>
       <div class="modal-box">
@@ -533,6 +571,10 @@
         <div class="modal-sub">Drag the frame to choose what gets exported.</div>
         <div class="crop-stage" id="cropStage">
           <img id="cropImg" alt="preview" draggable="false" />
+          <!-- Animated preview overlay (shown for animated exports): mirrors the
+               scene as the timeline plays, so the user can check the crop holds
+               over the whole motion. Sits under the crop box so handles stay on top. -->
+          <canvas id="cropCanvas" class="crop-canvas" hidden></canvas>
           <div class="crop-box" id="cropBox">
             <span class="handle tl" data-h="tl"></span>
             <span class="handle tr" data-h="tr"></span>
@@ -540,11 +582,22 @@
             <span class="handle br" data-h="br"></span>
           </div>
         </div>
+        <div class="crop-transport" id="cropTransport" hidden>
+          <button class="tl-btn play" id="cropPlay" type="button" title="Play / pause preview">
+            <svg class="i"><use id="cropPlayIcon" href="#i-play" /></svg>
+          </button>
+          <input type="range" id="cropScrub" class="crop-scrub" min="0" max="1000" value="0" aria-label="Preview time" />
+          <span class="crop-time" id="cropTime">0:00.0</span>
+        </div>
         <div class="modal-actions">
           <button id="cropReset" class="btn ghost">
             <svg class="i"><use href="#i-crop" /></svg><span>Reset crop</span>
           </button>
           <div class="spacer"></div>
+          <select id="exportFormat" class="preset-select fmt-select" hidden title="Video format">
+            <option value="hevc">HEVC + alpha · compact</option>
+            <option value="prores">ProRes 4444 · editing master</option>
+          </select>
           <button id="cropCancel" class="btn ghost">Cancel</button>
           <button id="cropDownload" class="btn primary">
             <svg class="i"><use href="#i-download" /></svg><span id="cropDownloadLabel">Download PNG</span>

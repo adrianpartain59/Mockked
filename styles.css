@@ -261,19 +261,39 @@ html, body {
 /* =====================================================================
    Left tool rail
    ===================================================================== */
-.toolrail {
-  position: fixed;
-  left: 14px;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 15;
-  border-radius: 14px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+/* Transform tools — Move / Rotate / Gizmo, relocated into the right panel's
+   Transform section as a segmented control. */
+.xform-tools {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 4px;
-  padding: 7px;
+  margin-bottom: 8px;
 }
+.xform-btn {
+  border: none;
+  border-radius: 9px;
+  background: var(--fill-1);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 4px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.xform-btn .i { width: 15px; height: 15px; }
+.xform-btn:hover { background: var(--fill-2); color: var(--text); }
+.xform-btn.mode.active,
+.xform-btn.rail-toggle:has(input:checked) {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  box-shadow: inset 0 0 0 1px rgba(124, 140, 255, 0.35);
+}
+.xform-btn.rail-toggle:not(:has(input:checked)) { opacity: 0.6; }
+.xform-btn.rail-toggle:not(:has(input:checked)):hover { opacity: 1; }
 
 .rail-btn {
   position: relative;
@@ -573,7 +593,8 @@ html, body {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 8px;
+  /* matches the pointer edge-zone in app.js: resize wins near the edges */
+  width: min(14px, 30%);
   cursor: ew-resize;
 }
 .tl-clip .h.l { left: 0; border-radius: 6px 0 0 6px; }
@@ -594,6 +615,8 @@ html, body {
 .tl-clip:hover .h::after, .tl-clip.selected .h::after { opacity: 1; }
 .tl-clip .x {
   display: none;
+  position: relative;
+  z-index: 2; /* stays clickable above the resize handles */
   border: none;
   background: rgba(0, 0, 0, 0.45);
   color: #fff;
@@ -625,6 +648,7 @@ html, body {
 .tl-clip.media .clip-label {
   position: relative;
   z-index: 1;
+  pointer-events: none; /* don't block the left resize zone's cursor */
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -636,7 +660,7 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.tl-clip.media .x { position: relative; z-index: 1; margin-right: 5px; }
+.tl-clip.media .x { margin-right: 5px; }
 
 /* Play range: held-frame zones dim the bar; markers flag the play/freeze points. */
 .tl-clip .hold {
@@ -1146,6 +1170,10 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .preset-select:hover { border-color: var(--line-strong); }
 .preset-select:focus { outline: none; border-color: var(--accent-line); }
 
+/* Video format picker in the export modal — sized to its content, not full width. */
+.fmt-select { width: auto; min-width: 190px; padding-top: 9px; padding-bottom: 9px; }
+.fmt-select[hidden] { display: none; }
+
 .modes { display: flex; gap: 8px; }
 .modes > .btn { flex: 1; }
 
@@ -1556,6 +1584,18 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 }
 .trim-times strong { color: var(--text); font-weight: 500; }
 
+/* ---- Clip edit modal ---- */
+.clip-edit-trim { display: flex; flex-direction: column; gap: 10px; }
+.clip-edit-fields {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.clip-edit-fields label { display: inline-flex; align-items: center; gap: 7px; }
+.clip-edit-fields input.num { width: 64px; }
+
 /* ---- Crop & export ---- */
 .crop-stage {
   position: relative;
@@ -1568,6 +1608,16 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   background: repeating-conic-gradient(#16161b 0% 25%, #0b0b0e 0% 50%) 50% / 18px 18px;
 }
 #cropImg { display: block; max-width: 100%; max-height: 60vh; user-select: none; }
+/* Animated preview canvas — exactly overlays #cropImg; drags pass through to
+   the crop box above it. */
+.crop-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.crop-canvas[hidden] { display: none; }
 .crop-box {
   position: absolute;
   border: 1.5px solid #fff;
@@ -1598,6 +1648,56 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .crop-box .tr { top: -6px; right: -6px; cursor: nesw-resize; }
 .crop-box .bl { bottom: -6px; left: -6px; cursor: nesw-resize; }
 .crop-box .br { bottom: -6px; right: -6px; cursor: nwse-resize; }
+
+/* Crop-modal preview transport — play/scrub the animation under the crop box. */
+.crop-transport {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 7px 12px;
+  background: var(--fill-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.crop-transport[hidden] { display: none; }
+.crop-scrub {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--fill-3);
+  cursor: pointer;
+}
+.crop-scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  cursor: grab;
+}
+.crop-scrub::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: grab;
+}
+.crop-scrub:focus { outline: none; }
+.crop-scrub:focus::-webkit-slider-thumb { box-shadow: 0 0 0 4px var(--accent-soft); }
+.crop-time {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 46px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 
 /* =====================================================================
    Responsive

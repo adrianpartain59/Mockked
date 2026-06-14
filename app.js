@@ -52,6 +52,11 @@ const DEFAULT_COLOR = "#4a4a50";
 const DEFAULT_FINISH = 0.42;
 const DEFAULT_DRAMA = 1; // scene lighting contrast: 0 = soft/flat, 1 = high-contrast, up to 3 = extreme
 const MAX_DRAMA = 3;
+// Baked finish values for the metal rail and the studio reflection environment.
+const DEFAULT_REFLECT = 1.5;    // rail envMapIntensity — how brightly it reflects the studio
+const DEFAULT_METALNESS = 1.0;  // rail metalness — 1 = pure metal
+const DEFAULT_ENV_LIFT = 0.4;   // studio brightness — lifts the dark gaps the rail reflects
+const DEFAULT_EXPOSURE = 0.9;   // #3: tone-map exposure <1 dims the tone-mapped body so the unlit screen out-shines it
 const DEVICE_SPACING = 0.14; // x-offset between devices so they don't overlap
 
 const canvas = document.getElementById("stage");
@@ -73,7 +78,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 // ACES Filmic gives, so the device reads punchy rather than dull. (Requires
 // three r162+.)
 renderer.toneMapping = THREE.NeutralToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.toneMappingExposure = DEFAULT_EXPOSURE;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 // Render-on-demand flag. Declared up here (not in the render-loop section below)
@@ -131,35 +136,76 @@ transform.addEventListener("change", render);
 // sweep plus two soft softboxes) into the environment. That gives a clean,
 // controllable reflection that reads as an authentic polished-metal finish from
 // every angle, with no random glare.
-function makeStudioEnvTexture() {
+function makeStudioEnvTexture(envLift = DEFAULT_ENV_LIFT) {
   const w = 1024, h = 512;
   const c = document.createElement("canvas");
   c.width = w;
   c.height = h;
   const ctx = c.getContext("2d");
 
-  // Vertical gradient: dim zenith → bright eye-level sweep → dim floor. The bright
-  // band sits at the horizon so it sweeps cleanly across the phone's rounded edge.
+  // Base studio gradient: dark zenith → bright eye-level sweep → dark floor. Kept
+  // deliberately darker than the softboxes below so their reflections read as
+  // crisp, hot highlights against a deep body — not a uniform bright smear.
+  // `envLift` (0..1) raises only the dark tones — zenith, floor and the eye-level
+  // gaps the rail reflects — leaving the bright sweep and softboxes alone, so the
+  // metal lifts out of near-black without losing its highlight contrast.
+  const lift = (hex, amt) =>
+    new THREE.Color(hex).lerp(new THREE.Color(0xffffff), envLift * amt).getStyle();
   const g = ctx.createLinearGradient(0, 0, 0, h);
-  g.addColorStop(0.0, "#33333a");
-  g.addColorStop(0.34, "#9a9aa4");
-  g.addColorStop(0.5, "#ffffff");
-  g.addColorStop(0.66, "#b4b4be");
-  g.addColorStop(1.0, "#3c3c44");
+  g.addColorStop(0.0, lift("#202024", 0.28));
+  g.addColorStop(0.34, lift("#7c7c86", 0.18));
+  g.addColorStop(0.5, "#e9ebef");
+  g.addColorStop(0.66, lift("#56565f", 0.22));
+  g.addColorStop(1.0, lift("#141417", 0.26));
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
 
-  // Two soft "softbox" highlights give clean specular streaks on the metal edge.
+  const roundRect = (x, y, rw, rh, r) => {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + rw, y, x + rw, y + rh, r);
+    ctx.arcTo(x + rw, y + rh, x, y + rh, r);
+    ctx.arcTo(x, y + rh, x, y, r);
+    ctx.arcTo(x, y, x + rw, y, r);
+    ctx.closePath();
+  };
+
+  // Crisp rounded-rectangle softboxes. Defined edges and bright cores give the
+  // metal a clean specular streak as the camera moves; PMREM blurs them per
+  // roughness, so glossy surfaces get the sharp shape and rougher ones a soft glow.
   ctx.globalCompositeOperation = "lighter";
-  for (const cx of [0.22, 0.7]) {
-    const x = cx * w, y = h * 0.44, r = w * 0.15;
-    const rg = ctx.createRadialGradient(x, y, 0, x, y, r);
-    rg.addColorStop(0, "rgba(255,255,255,0.85)");
-    rg.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = rg;
-    ctx.fillRect(0, 0, w, h);
-  }
+  const softbox = (cx, cy, bw, bh, peak) => {
+    const x = cx * w - bw / 2, y = cy * h - bh / 2, r = Math.min(bw, bh) * 0.3;
+    ctx.save();
+    roundRect(x, y, bw, bh, r);
+    ctx.clip();
+    const lg = ctx.createLinearGradient(x, y, x, y + bh);
+    lg.addColorStop(0.0, `rgba(255,255,255,${peak * 0.55})`);
+    lg.addColorStop(0.5, `rgba(255,255,255,${peak})`);
+    lg.addColorStop(1.0, `rgba(255,255,255,${peak * 0.45})`);
+    ctx.fillStyle = lg;
+    ctx.fillRect(x, y, bw, bh);
+    ctx.restore();
+  };
+  // A broad overhead strip, plus three eye-level boxes (one main, two flanking)
+  // that the rounded edge sweeps a highlight across.
+  softbox(0.5, 0.12, w * 0.5, h * 0.08, 0.5);
+  softbox(0.5, 0.44, w * 0.26, h * 0.4, 1.0);
+  softbox(0.16, 0.46, w * 0.13, h * 0.3, 0.85);
+  softbox(0.84, 0.46, w * 0.13, h * 0.3, 0.85);
+
+  // Thin dark vertical separators cut hard gaps into the reflection, so a highlight
+  // snaps and "races" across the chamfer as you orbit instead of smearing.
   ctx.globalCompositeOperation = "source-over";
+  for (const cx of [0.33, 0.67]) {
+    const sw = w * 0.03, sx = cx * w;
+    const sg = ctx.createLinearGradient(sx - sw, 0, sx + sw, 0);
+    sg.addColorStop(0.0, "rgba(8,8,10,0)");
+    sg.addColorStop(0.5, `rgba(8,8,10,${0.8 * (1 - envLift * 0.5)})`);
+    sg.addColorStop(1.0, "rgba(8,8,10,0)");
+    ctx.fillStyle = sg;
+    ctx.fillRect(sx - sw, h * 0.18, sw * 2, h * 0.64);
+  }
 
   const tex = new THREE.CanvasTexture(c);
   tex.mapping = THREE.EquirectangularReflectionMapping;
@@ -167,6 +213,8 @@ function makeStudioEnvTexture() {
   return tex;
 }
 
+// Studio reflection environment, baked once. makeStudioEnvTexture() applies the
+// default dark-tone lift (DEFAULT_ENV_LIFT) to the gaps the rail reflects.
 const pmrem = new THREE.PMREMGenerator(renderer);
 {
   const envSrc = makeStudioEnvTexture();
@@ -256,15 +304,39 @@ loadTemplate(DEVICE_TYPES[0]).then((tmpl) => {
 // still read while the edge stays shiny. The normal map is dropped so the
 // reflection stays smooth instead of breaking up into sparkle.
 function toGlossyMetal(std) {
+  // Bare anodized/titanium rail: real metal is metalness 1 with no clearcoat. The
+  // old clearcoat stacked a second white specular lobe on top of the metal's own,
+  // which read as glossy plastic; dropping it lets the structured studio env
+  // reflect as a clean machined-metal streak instead.
   const p = new THREE.MeshPhysicalMaterial({
     color: std.color ? std.color.clone() : new THREE.Color(0x4a4a50),
-    metalness: 0.6,
-    roughness: 0.38,
-    clearcoat: 1.0,
-    clearcoatRoughness: 0.06,
-    envMapIntensity: 1.15,
+    metalness: DEFAULT_METALNESS,
+    roughness: 0.32,
+    envMapIntensity: DEFAULT_REFLECT,
   });
   p.name = std.name;
+  p.userData.baseRoughness = 0.32;
+  return p;
+}
+
+// The matte glass back panel of a Pro: a tinted dielectric (metalness 0) under a
+// glossy clearcoat. The body roughness keeps the panel itself soft/frosted while
+// the low clearcoat roughness adds the bright specular sheen and Fresnel edge that
+// sells real cover glass — this is where a clearcoat belongs, not on the metal.
+function toFrostedGlass(std) {
+  const p = new THREE.MeshPhysicalMaterial({
+    color: std.color ? std.color.clone() : new THREE.Color(0x4a4a50),
+    map: std.map || null,
+    metalness: 0.0,
+    roughness: 0.45,
+    clearcoat: 1.0,
+    clearcoatRoughness: 0.1,
+    ior: 1.5,
+    envMapIntensity: 1.0,
+  });
+  p.name = std.name;
+  p.userData.baseRoughness = 0.45;
+  p.userData.baseClearcoatRoughness = 0.1;
   return p;
 }
 
@@ -339,11 +411,16 @@ function buildDevice(type, tmpl) {
         clearGlass.name = m.name;
         return clearGlass;
       } else if (n === "anodized aluminum") {
-        m = toGlossyMetal(m); // polished edge with a clearcoat sheen
+        m = toGlossyMetal(m); // bare metal rail with a crisp specular streak
         bodyMaterials.frame.push(m);
       } else if (n === "plastic antena") {
+        // Semi-matte plastic so the antenna lines read distinct from the rail.
+        m.metalness = 0;
+        m.roughness = 0.6;
+        m.userData.baseRoughness = 0.6;
         bodyMaterials.antenna.push(m);
       } else if (n === "frosted glass") {
+        m = toFrostedGlass(m); // tinted dielectric under a glossy clearcoat
         bodyMaterials.back.push(m);
       } else {
         // Preserve all other materials (camera lenses, LEDs, ports, screws,
@@ -635,8 +712,6 @@ function syncControlsToDevice() {
   const s = activeDevice.settings;
   $("bodyColor").value = s.color;
   updateActiveSwatch(s.color);
-  $("finish").value = s.finish;
-  $("finishN").value = s.finish;
   refreshTransformSliders();
 }
 
@@ -1445,7 +1520,7 @@ function closeTrimEditor() {
 
 // Loop the preview within the selected range so the user sees the trimmed clip.
 trimVideo.addEventListener("timeupdate", () => {
-  if (trimModal.hidden || trimResolving) return;
+  if (trimModal.hidden || trimResolving || trimDrag) return;
   if (trimVideo.currentTime >= trimEnd || trimVideo.currentTime < trimStart - 0.05) {
     trimVideo.currentTime = trimStart;
   }
@@ -1471,14 +1546,24 @@ function trimPointerMove(e) {
   updateTrimPlayhead();
 }
 function trimPointerUp() {
+  const wasDragging = trimDrag;
   trimDrag = null;
   window.removeEventListener("pointermove", trimPointerMove);
   window.removeEventListener("pointerup", trimPointerUp);
+  // Resume playback from wherever the handle landed so the user can confirm the
+  // ideal frame they scrubbed to. Starting from the new trimStart for a start-
+  // handle drag, or just letting the loop resume for an end-handle drag.
+  if (wasDragging === "start") trimVideo.currentTime = trimStart;
+  trimVideo.play().catch(() => {});
 }
 [trimStartHandle, trimEndHandle].forEach((h) => {
   h.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     trimDrag = h.dataset.h;
+    // Pause while scrubbing the handle so the playback loop doesn't advance the
+    // frame out from under you — the preview stays parked on the exact frame the
+    // edge is pointing at until you let go.
+    trimVideo.pause();
     window.addEventListener("pointermove", trimPointerMove);
     window.addEventListener("pointerup", trimPointerUp);
   });
@@ -1585,15 +1670,37 @@ function applyDeviceColor(dev, hex) {
   dev.settings.color = hex;
   const c = new THREE.Color(hex);
   const lighter = c.clone().lerp(new THREE.Color(0xffffff), 0.15);
+  // The back panel is a metalness-0 dielectric: its full diffuse lobe re-emits a
+  // big fraction of the bright studio irradiance, so the same albedo reads much
+  // lighter than the metal frame. Darken its albedo so the lit panel lands close
+  // to the chosen color instead of washing out toward white.
+  const darkerBack = c.clone().multiplyScalar(0.6);
   for (const m of dev.bodyMaterials.frame) m.color.copy(c);
-  for (const m of dev.bodyMaterials.back) m.color.copy(c);
+  for (const m of dev.bodyMaterials.back) m.color.copy(darkerBack);
   for (const m of dev.bodyMaterials.antenna) m.color.copy(lighter);
 }
 
+// The finish slider (0 glossy → 1 matte) shifts every body material around its own
+// designed base roughness, instead of stomping frame, back and antenna to one
+// shared value. Keeping their relative spacing is what preserves the material
+// differentiation — metal vs. glass vs. plastic — at any slider position.
 function applyDeviceFinish(dev, r) {
   dev.settings.finish = r;
+  const offset = r - DEFAULT_FINISH;
   for (const key of ["frame", "antenna", "back"]) {
-    for (const m of dev.bodyMaterials[key]) m.roughness = r;
+    for (const m of dev.bodyMaterials[key]) {
+      const base = m.userData.baseRoughness;
+      if (base == null) {
+        m.roughness = r; // other device types: map the slider straight through
+        continue;
+      }
+      m.roughness = THREE.MathUtils.clamp(base + offset, 0.03, 1);
+      if (m.userData.baseClearcoatRoughness != null) {
+        m.clearcoatRoughness = THREE.MathUtils.clamp(
+          m.userData.baseClearcoatRoughness + offset * 0.5, 0.02, 1
+        );
+      }
+    }
   }
 }
 
@@ -1634,20 +1741,10 @@ function setDrama(v) {
 }
 applyDrama(DEFAULT_DRAMA);
 
-// Finish slider (per-device surface roughness). 0 = glossy, 1 = matte.
-// Applies to the active device only; range + number stay in sync.
-const finishInput = $("finish");
-const finishNumber = $("finishN");
-function setFinish(v) {
-  const r = THREE.MathUtils.clamp(parseFloat(v), 0, 1);
-  if (Number.isNaN(r)) return;
-  finishInput.value = r;
-  finishNumber.value = r;
-  if (activeDevice) applyDeviceFinish(activeDevice, r);
-  render();
-}
-finishInput.addEventListener("input", () => setFinish(finishInput.value));
-finishNumber.addEventListener("input", () => setFinish(finishNumber.value));
+// Finish (per-device surface roughness) and Exposure (scene-wide tone-map) no
+// longer have UI sliders, but their values still apply: the finish default rides
+// in via applyDeviceFinish during build/load, and exposure is set from
+// DEFAULT_EXPOSURE at startup and restored from saved state on load.
 
 // Screen brightness (emissivity) — per-device. The UI control was removed;
 // kept so preset/device loads can still apply a stored value.
@@ -1910,13 +2007,111 @@ function renderToBlob(scaleFactor = exportScaleFactor()) {
   });
 }
 
+// Which codec the .mov export uses: "hevc" (compact HEVC+alpha, the default and
+// the GPU YUVA420 fast path) or "prores" (ProRes 4444 editing master). Ignored by
+// the WebM fallback, which has no codec choice.
+let exportVideoFormat = "hevc";
+$("exportFormat").addEventListener("change", (e) => {
+  exportVideoFormat = e.target.value === "prores" ? "prores" : "hevc";
+});
+
 // Swap the Save button (and the crop modal's download button) between still and
-// video output depending on whether any device's screen is a clip.
+// video output depending on whether any device's screen is a clip. The video
+// format picker only makes sense for video, so it rides the same toggle.
 function updateSaveButtonLabel() {
   const vid = isVideoMockup() || animActive();
   $("savePngLabel").textContent = vid ? "Export Video" : "Export PNG";
   $("cropDownloadLabel").textContent = vid ? "Download Video" : "Download PNG";
+  $("exportFormat").hidden = !vid;
 }
+
+// Animated preview inside the crop modal. The still PNG the user crops against
+// is one frame; if the scene is animated the phone moves, so a crop that frames
+// it now may clip it later. This loops the animation under the (fixed) crop box —
+// poses the timeline, renders, and mirrors the canvas into an overlay — so the
+// user can confirm the crop holds across the whole motion before exporting. It
+// mutates the live scene pose while running and restores it on stop(). Only the
+// camera/device motion drives smoothly; screen-clip video shows held frames.
+const cropPreview = (() => {
+  const canvasEl = $("cropCanvas");
+  const ctx = canvasEl.getContext("2d");
+  const transport = $("cropTransport");
+  const playIcon = $("cropPlayIcon");
+  const scrub = $("cropScrub");
+  const timeEl = $("cropTime");
+  let raf = null, playing = false, active = false;
+  let u = 0, dur = 0, restoreU = 0, savedGizmo = true;
+
+  function drawAt(uu) {
+    u = THREE.MathUtils.clamp(uu, 0, 1);
+    tlApplyU(u);
+    renderFrame();
+    ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+    ctx.drawImage(canvas, 0, 0, canvasEl.width, canvasEl.height);
+    scrub.value = String(Math.round(u * 1000));
+    timeEl.textContent = tlFmtClock(u * dur);
+  }
+  function frame(t0, startU) {
+    if (!playing) return;
+    let uu = startU + (performance.now() - t0) / 1000 / dur;
+    if (uu >= 1) { uu %= 1; t0 = performance.now(); startU = uu; } // loop
+    drawAt(uu);
+    raf = requestAnimationFrame(() => frame(t0, startU));
+  }
+  function play() {
+    if (playing || !active || !dur) return;
+    playing = true;
+    playIcon.setAttribute("href", "#i-pause");
+    frame(performance.now(), u >= 1 ? 0 : u);
+  }
+  function pause() {
+    playing = false;
+    if (raf) { cancelAnimationFrame(raf); raf = null; }
+    playIcon.setAttribute("href", "#i-play");
+  }
+
+  $("cropPlay").addEventListener("click", () => (playing ? pause() : play()));
+  scrub.addEventListener("input", () => { if (active) { pause(); drawAt((+scrub.value) / 1000); } });
+
+  return {
+    // Begins only for animated scenes (a moving phone to verify against).
+    start() {
+      if (!animActive()) return;
+      dur = TL.duration;
+      if (!dur) return;
+      active = true;
+      restoreU = THREE.MathUtils.clamp(TL.time / TL.duration, 0, 1);
+      u = 0;
+      // Own the camera while previewing: no gizmo in the frame, no controls drift.
+      savedGizmo = $("gizmoToggle").checked;
+      controls.enabled = false;
+      transform.enabled = false;
+      transform.visible = false;
+      canvasEl.width = Math.max(1, Math.round(cropImg.clientWidth));
+      canvasEl.height = Math.max(1, Math.round(cropImg.clientHeight));
+      cropImg.style.visibility = "hidden";
+      canvasEl.hidden = false;
+      transport.hidden = false;
+      drawAt(0);
+      play();
+    },
+    // Idempotent: restores the scene pose and editor state, hides the overlay.
+    stop() {
+      if (!active) return;
+      pause();
+      active = false;
+      transport.hidden = true;
+      canvasEl.hidden = true;
+      cropImg.style.visibility = "";
+      controls.enabled = true;
+      transform.enabled = savedGizmo;
+      transform.visible = savedGizmo;
+      tlApplyU(restoreU); // put the scene back where the playhead was
+      needsRender = true;
+      dur = 0;
+    },
+  };
+})();
 
 $("savePng").addEventListener("click", async () => {
   tlPause();
@@ -1931,8 +2126,12 @@ $("savePng").addEventListener("click", async () => {
   cropImg.onload = () => {
     saveModal.hidden = false;
     // Wait for the image to decode and the modal layout to settle so the crop
-    // box matches the displayed size and the pixels are readable.
-    const fit = () => requestAnimationFrame(() => requestAnimationFrame(autoFitCropBox));
+    // box matches the displayed size and the pixels are readable. Auto-fit reads
+    // the still's pixels first; then the animated preview takes over the overlay.
+    const fit = () => requestAnimationFrame(() => requestAnimationFrame(() => {
+      autoFitCropBox();
+      cropPreview.start();
+    }));
     if (cropImg.decode) cropImg.decode().then(fit, fit);
     else fit();
   };
@@ -1940,6 +2139,7 @@ $("savePng").addEventListener("click", async () => {
 });
 
 $("cropCancel").addEventListener("click", () => {
+  cropPreview.stop();
   saveModal.hidden = true;
   if (cropImg.src) URL.revokeObjectURL(cropImg.src);
 });
@@ -2134,31 +2334,28 @@ function pickVideoMime() {
   return "";
 }
 
-// Record the cropped, transparent scene to a WebM clip for the duration of the
-// longest device clip's trim window. Each frame: render the scene, then blit the
-// crop region into a 2D canvas whose captureStream() feeds the recorder.
-async function downloadVideo(cropNorm) {
-  const mime = pickVideoMime();
-  if (!mime) {
-    setStatus("Video export isn't supported in this browser.");
-    return;
-  }
+const EXPORT_FPS = 60;
+
+// What the export has to cover: every device screen video and its trim span,
+// plus the animation timeline. Clip length: one full timeline cycle, or the
+// longest screen clip — whichever is longer (a looping animation keeps cycling
+// under a longer screen video).
+function exportClipPlan() {
   const vids = devices
     .filter((d) => d.screenIsVideo && d.screenVideo)
-    .map((d) => ({ v: d.screenVideo, asset: d.screenVideoAsset }));
+    .map((d) => ({ dev: d, v: d.screenVideo, asset: d.screenVideoAsset }));
   const durOf = (x) => (x.asset?.trim?.end ?? x.v.duration) - (x.asset?.trim?.start ?? 0);
-  // Clip length: one full timeline cycle, or the longest screen clip — whichever
-  // is longer (a looping animation keeps cycling under a longer screen video).
   const animDur = animActive() ? TL.duration : 0;
   const vidDur = vids.length ? Math.max(...vids.map(durOf)) : 0;
-  const maxDur = Math.max(animDur, vidDur);
-  if (!maxDur) return downloadStillPng();
-  tlPause();
+  return { vids, animDur, maxDur: Math.max(animDur, vidDur) };
+}
 
-  // Reproduce the still preview's exact framing: same camera aspect and the same
-  // canvas proportions used when the preview was rendered (previewBasis), so the
-  // recorded frames line up with the crop box. Then size the full frame so the
-  // cropped output's long edge is true 4K, clamped to the GPU's texture limit.
+// Reproduce the still preview's exact framing: same camera aspect and the same
+// canvas proportions used when the preview was rendered (previewBasis), so the
+// frames line up with the crop box. The full frame is sized so the cropped
+// output's long edge is true 4K, clamped to the GPU's texture limit and rounded
+// down to even dimensions (video encoders require them).
+function exportGeometry(cropNorm) {
   const basis = previewBasis || { camAspect: camera.aspect, w: canvas.clientWidth, h: canvas.clientHeight };
   const aspect = basis.w / basis.h;
   const maxTex = renderer.capabilities.maxTextureSize || 8192;
@@ -2167,42 +2364,925 @@ async function downloadVideo(cropNorm) {
   const k = Math.min(1, maxTex / fullW, maxTex / fullH);
   fullW = Math.round(fullW * k);
   fullH = Math.round(fullH * k);
-  const outW = Math.max(2, Math.round(cropNorm.w * fullW));
-  const outH = Math.max(2, Math.round(cropNorm.h * fullH));
-  const sx = cropNorm.x * fullW;
-  const sy = cropNorm.y * fullH;
+  const outW = Math.max(2, 2 * Math.floor((cropNorm.w * fullW) / 2));
+  const outH = Math.max(2, 2 * Math.floor((cropNorm.h * fullH) / 2));
+  return { basis, fullW, fullH, outW, outH, sx: cropNorm.x * fullW, sy: cropNorm.y * fullH };
+}
 
-  const out = document.createElement("canvas");
-  out.width = outW;
-  out.height = outH;
-  const octx = out.getContext("2d");
-
-  // Bitrate scales with resolution (~0.2 bits/px/frame at 30fps), capped at
-  // 60 Mbps so a 4K clip stays high-quality without ballooning the file.
-  const bitrate = Math.min(60_000_000, Math.round(outW * outH * 30 * 0.2));
-  const stream = out.captureStream(30);
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrate });
-  const chunks = [];
-  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-
-  // Take over rendering: full-res, no gizmo, and pause the on-demand loop.
-  exporting = true;
+// Point the renderer at the crop region only: same frustum as the full preview
+// frame, but rasterizing just the cropped window at output resolution — ~4×
+// less GPU work than rendering the whole frame and cropping it down.
+// Returns a restore function.
+function enterExportView(g) {
   const prevRatio = renderer.getPixelRatio();
   const prevAspect = camera.aspect;
   const gizmoWasVisible = transform.visible;
   transform.visible = false;
   renderer.setPixelRatio(1);
-  renderer.setSize(fullW, fullH, false);
-  camera.aspect = basis.camAspect;
+  renderer.setSize(g.outW, g.outH, false);
+  camera.aspect = g.basis.camAspect;
+  camera.setViewOffset(g.fullW, g.fullH, g.sx, g.sy, g.outW, g.outH);
   camera.updateProjectionMatrix();
+  return () => {
+    camera.clearViewOffset();
+    transform.visible = gizmoWasVisible;
+    renderer.setPixelRatio(prevRatio);
+    camera.aspect = prevAspect;
+    camera.updateProjectionMatrix();
+    onResize();
+  };
+}
+
+// Pose the entire scene for export time t (seconds). The timeline drives the
+// camera/devices and seeks clip-owned screen videos (tlApplyScreens' exporting
+// branch); base screen videos are seeked to where they'd be after playing —
+// and natively looping — from their trim start. Returns the seeks it requested
+// so the export telemetry can check how precisely they landed.
+function exportPoseAt(t, plan) {
+  if (plan.animDur) {
+    const u = TL.loop && t > TL.duration
+      ? (t % TL.duration) / TL.duration
+      : Math.min(1, t / TL.duration);
+    tlApplyU(u);
+  }
+  const requested = [];
+  for (const x of plan.vids) {
+    if (x.dev._screenClipId != null) continue; // a timeline clip owns playback
+    const provider = exportVideoCtx?.providers.get(x.asset);
+    const dur = provider?.duration ?? x.v.duration;
+    const s0 = x.asset?.trim?.start ?? 0;
+    const span = Math.max(0.01, (x.asset?.trim?.end ?? dur) - s0);
+    const wantT = s0 + Math.min(t % span, span - 0.001);
+    if (!x.v.paused) x.v.pause();
+    if (provider) {
+      // WebCodecs path: queue the exact frame instead of seeking the element.
+      exportVideoCtx.requests.push({ dev: x.dev, asset: x.asset, t: wantT });
+    } else {
+      if (Math.abs(x.v.currentTime - wantT) > 0.001) x.v.currentTime = wantT;
+      requested.push({ v: x.v, wantT });
+    }
+  }
+  return requested;
+}
+
+// Wait until no screen video is mid-seek, so the rendered frame shows the exact
+// video frame for this timestamp instead of a stale one. The timeout keeps a
+// stuck seek from wedging the whole export. Resolves with per-video wait
+// details for the export telemetry.
+function awaitScreenSeeks() {
+  const pending = devices
+    .filter((d) => d.screenVideo && d.screenVideo.seeking)
+    .map((d, idx) => new Promise((res) => {
+      const v = d.screenVideo;
+      const t0 = performance.now();
+      let tid;
+      const finish = (timedOut) => {
+        clearTimeout(tid);
+        v.removeEventListener("seeked", onSeeked);
+        res({ vid: idx, ms: performance.now() - t0, timedOut });
+      };
+      const onSeeked = () => finish(false);
+      tid = setTimeout(() => finish(true), 500);
+      v.addEventListener("seeked", onSeeked);
+    }));
+  return pending.length ? Promise.all(pending) : Promise.resolve([]);
+}
+
+// ---- Export telemetry -------------------------------------------------
+// Every .mov export writes a companion -telemetry.json next to the video with
+// per-frame phase timings, environment info, and server-side encode stats, so
+// slow exports can be diagnosed from the file alone.
+
+// avg / median / p90 / max for one phase's per-frame samples.
+function telStats(arr) {
+  if (!arr.length) return null;
+  const s = [...arr].sort((a, b) => a - b);
+  const r1 = (x) => Math.round(x * 10) / 10;
+  return {
+    avgMs: r1(arr.reduce((a, b) => a + b, 0) / arr.length),
+    p50Ms: r1(s[Math.floor(s.length * 0.5)]),
+    p90Ms: r1(s[Math.floor(s.length * 0.9)]),
+    maxMs: r1(s[s.length - 1]),
+  };
+}
+
+function saveExportTelemetry(tel, stamp) {
+  try {
+    window.__lastExportTelemetry = tel; // also reachable from the console
+    const blob = new Blob([JSON.stringify(tel, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `iphone-mockup-${stamp}-telemetry.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (e) {
+    console.warn("telemetry save failed", e);
+  }
+}
+
+// Async GPU readback: a small ring of WebGL2 pixel-pack buffers. readPixels
+// into a PBO returns immediately (the copy happens on the GPU's timeline), and
+// a fence tells us when each frame's bytes are ready to map — so the CPU keeps
+// rendering instead of stalling ~30ms per 4K frame like getImageData does.
+// Each slot owns a reusable byte buffer: zero per-frame allocation.
+class ReadbackRing {
+  // w×h is the readback rectangle (always read as RGBA8). frameBytes is how many
+  // of those bytes are actually the frame: for plain RGBA it's the whole buffer,
+  // but the YUVA420 pack rounds its target up to a whole row, so the real planar
+  // stream is the leading frameBytes and the tail is padding we never upload.
+  constructor(gl, w, h, frameBytes = w * h * 4, depth = 3) {
+    this.gl = gl;
+    this.w = w;
+    this.h = h;
+    this.size = w * h * 4;
+    this.frameBytes = frameBytes;
+    this.slots = [];
+    for (let i = 0; i < depth; i++) {
+      const pbo = gl.createBuffer();
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo);
+      gl.bufferData(gl.PIXEL_PACK_BUFFER, this.size, gl.STREAM_READ);
+      this.slots.push({ pbo, fence: null, frame: -1, bytes: new Uint8Array(frameBytes) });
+    }
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    this.free = [...this.slots];
+    this.pending = []; // in-flight reads, oldest first
+  }
+  hasFree() {
+    return this.free.length > 0;
+  }
+  // Queue an async copy of the current framebuffer into a free slot.
+  enqueue(frame) {
+    const gl = this.gl;
+    const s = this.free.shift();
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, s.pbo);
+    gl.readPixels(0, 0, this.w, this.h, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+    s.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    gl.flush();
+    s.frame = frame;
+    this.pending.push(s);
+  }
+  // True when the oldest in-flight read has finished on the GPU.
+  oldestReady() {
+    const s = this.pending[0];
+    if (!s) return false;
+    const st = this.gl.clientWaitSync(s.fence, 0, 0);
+    return st === this.gl.ALREADY_SIGNALED || st === this.gl.CONDITION_SATISFIED;
+  }
+  // Map the oldest finished read out and recycle its slot. The returned bytes
+  // are reused once the slot cycles back, so consume them (Blob copies) first.
+  take() {
+    const gl = this.gl;
+    const s = this.pending.shift();
+    gl.deleteSync(s.fence);
+    s.fence = null;
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, s.pbo);
+    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, s.bytes);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    this.free.push(s);
+    return { frame: s.frame, bytes: s.bytes };
+  }
+  dispose() {
+    for (const s of this.slots) {
+      if (s.fence) this.gl.deleteSync(s.fence);
+      this.gl.deleteBuffer(s.pbo);
+    }
+  }
+}
+
+// The WebGL canvas holds PREMULTIPLIED alpha (standard blending against the
+// transparent clear multiplies color by coverage), and ffmpeg expects straight
+// alpha. Render the scene into a texture, then blit it through a fullscreen
+// shader that divides RGB back out by alpha — un-premultiplied on the GPU in
+// well under a millisecond, instead of per-pixel CPU work. (The old 2D-canvas
+// readback did this implicitly inside getImageData.)
+function makeExportBlit(g) {
+  const rt = new THREE.WebGLRenderTarget(g.outW, g.outH, {
+    samples: 4, // keep MSAA so exported edges match the preview
+    depthBuffer: true,
+    stencilBuffer: false,
+  });
+  rt.texture.colorSpace = renderer.outputColorSpace;
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { tSrc: { value: rt.texture } },
+    vertexShader: "varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+    fragmentShader:
+      "uniform sampler2D tSrc; varying vec2 vUv;" +
+      "void main() { vec4 c = texture2D(tSrc, vUv);" +
+      "  gl_FragColor = vec4(c.a > 0.0 ? c.rgb / c.a : vec3(0.0), c.a); }",
+    depthTest: false,
+    depthWrite: false,
+    blending: THREE.NoBlending,
+  });
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+  const blitScene = new THREE.Scene();
+  blitScene.add(quad);
+  const blitCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  return {
+    // Readback geometry for the ring: straight RGBA off the canvas, bottom-up
+    // (the server flips it). Used for HEVC on a WebGL1 fallback and for ProRes,
+    // whose native RGB the server turns into 4444 without subsampling.
+    layout: "rgba",
+    readW: g.outW,
+    readH: g.outH,
+    frameBytes: g.outW * g.outH * 4,
+    render() {
+      renderer.setRenderTarget(rt);
+      renderFrame();
+      renderer.setRenderTarget(null);
+      renderer.render(blitScene, blitCam); // NoBlending quad overwrites the whole canvas
+    },
+    dispose() {
+      rt.dispose();
+      mat.dispose();
+      quad.geometry.dispose();
+    },
+  };
+}
+
+// HEVC's encoder is 4:2:0 internally, so we may as well subsample BEFORE readback
+// and move 1.6x less data per frame. This pass renders the scene into an MSAA
+// target, then a GLSL3 quad converts RGBA→planar yuva420p on the GPU: it
+// un-premultiplies, applies the bt709 limited-range matrix, bakes the vertical
+// flip in, and packs Y (full) + U,V (quarter) + A (full) into one byte stream —
+// exactly what ffmpeg reads with -pix_fmt yuva420p, so the server touches nothing.
+//
+// The trick: read the packed RGBA8 target back linearly and the bytes already
+// ARE the planar frame. readPixels delivers rows bottom-up, and gl_FragCoord.y is
+// bottom-origin too, so a fragment's linear byte index equals its offset in the
+// frame ffmpeg receives — we just decode that index into (plane, pixel) and emit
+// the right 4 bytes. Integer-exact, so it needs WebGL2 (float32 can't index 23M
+// bytes). The target is rounded up to a whole row; the padding tail is never sent.
+function makeYuvaPacker(g) {
+  const W = g.outW, H = g.outH;           // even (enforced by exportGeometry)
+  const total = (W * H * 5) / 2;          // yuva420p bytes: Y(WH) + U,V(WH/4) + A(WH)
+  const packW = W;                        // 4 bytes/texel → packW texels = W bytes/row
+  const packH = Math.ceil(total / (packW * 4));
+
+  const rt = new THREE.WebGLRenderTarget(W, H, {
+    samples: 4, // keep MSAA so exported edges match the preview
+    depthBuffer: true,
+    stencilBuffer: false,
+  });
+  rt.texture.colorSpace = renderer.outputColorSpace;
+  const packTarget = new THREE.WebGLRenderTarget(packW, packH, {
+    depthBuffer: false,
+    stencilBuffer: false,
+  });
+
+  const frag = `
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+uniform sampler2D tSrc;
+uniform int uW;       // output width  (luma)
+uniform int uH;       // output height (luma)
+uniform int uPackW;   // pack target width, in texels
+out vec4 fragColor;
+
+// Straight (un-premultiplied) source colour at image pixel (col,row), row 0 = top.
+// The render target stores premultiplied alpha; sampling is flipped vertically so
+// the emitted planar frame reads top-down.
+vec4 srcAt(int col, int row) {
+  vec2 uv = vec2((float(col) + 0.5) / float(uW), 1.0 - (float(row) + 0.5) / float(uH));
+  vec4 c = texture(tSrc, uv);
+  return vec4(c.a > 0.0 ? c.rgb / c.a : vec3(0.0), c.a);
+}
+float yOf(vec3 c)  { return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; }
+// bt709 limited-range 8-bit codes from gamma R'G'B' in [0,1].
+float lumaCode(vec3 c) { return 16.0 + 219.0 * yOf(c); }
+float cbCode(vec3 c)   { return 128.0 + 224.0 * ((c.b - yOf(c)) / 1.8556); }
+float crCode(vec3 c)   { return 128.0 + 224.0 * ((c.r - yOf(c)) / 1.5748); }
+
+float byteAt(int idx, int offU, int offV, int offA, int total, int cw) {
+  if (idx >= total) return 0.0;          // padding tail; never uploaded
+  float v;
+  if (idx < offU) {                      // Y plane (full res)
+    int row = idx / uW; int col = idx - row * uW;
+    v = lumaCode(srcAt(col, row).rgb);
+  } else if (idx < offA) {               // U then V plane (quarter res, 2x2 box)
+    bool isV = idx >= offV;
+    int local = idx - (isV ? offV : offU);
+    int crow = local / cw; int ccol = local - crow * cw;
+    int c0 = ccol * 2, r0 = crow * 2;
+    vec3 avg = 0.25 * (srcAt(c0, r0).rgb + srcAt(c0 + 1, r0).rgb
+                     + srcAt(c0, r0 + 1).rgb + srcAt(c0 + 1, r0 + 1).rgb);
+    v = isV ? crCode(avg) : cbCode(avg);
+  } else {                               // A plane (full res, straight coverage)
+    int local = idx - offA; int row = local / uW; int col = local - row * uW;
+    v = 255.0 * srcAt(col, row).a;
+  }
+  return floor(v + 0.5);                 // round to the 8-bit code
+}
+
+void main() {
+  int tx = int(gl_FragCoord.x);
+  int ty = int(gl_FragCoord.y);          // bottom-origin: matches readPixels order
+  int base = (ty * uPackW + tx) * 4;     // linear byte offset of this texel's R
+  int WH = uW * uH;
+  int offU = WH;
+  int offV = WH + WH / 4;
+  int offA = WH + WH / 2;
+  int total = offA + WH;
+  int cw = uW / 2;
+  fragColor = vec4(
+    byteAt(base,     offU, offV, offA, total, cw),
+    byteAt(base + 1, offU, offV, offA, total, cw),
+    byteAt(base + 2, offU, offV, offA, total, cw),
+    byteAt(base + 3, offU, offV, offA, total, cw)
+  ) / 255.0;
+}
+`;
+  const mat = new THREE.RawShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    uniforms: {
+      tSrc: { value: rt.texture },
+      uW: { value: W },
+      uH: { value: H },
+      uPackW: { value: packW },
+    },
+    vertexShader: "in vec3 position; void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }",
+    fragmentShader: frag,
+    depthTest: false,
+    depthWrite: false,
+    blending: THREE.NoBlending,
+  });
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+  const packScene = new THREE.Scene();
+  packScene.add(quad);
+  const packCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  return {
+    // The ring reads the pack target (not the canvas); its leading `total` bytes
+    // are the planar frame. No server flip/convert — the shader baked it in.
+    layout: "yuva420",
+    readW: packW,
+    readH: packH,
+    frameBytes: total,
+    render() {
+      renderer.setRenderTarget(rt);
+      renderFrame();
+      // Switching targets resolves rt's MSAA into rt.texture; the pack quad then
+      // samples it. Leaves packTarget bound so the ring's readPixels reads it.
+      renderer.setRenderTarget(packTarget);
+      renderer.render(packScene, packCam);
+    },
+    dispose() {
+      rt.dispose();
+      packTarget.dispose();
+      mat.dispose();
+      quad.geometry.dispose();
+    },
+  };
+}
+
+// ---- WebCodecs screen-video decode (export only) -----------------------
+// Seeking a <video> element re-decodes from the previous keyframe on EVERY
+// seek — 40ms+ per frame deep into a screen recording's GOP. For export we
+// instead demux the source with the vendored Mediabunny and decode each frame
+// exactly once, in order, on the hardware decoder (~2ms/frame). Timestamps
+// are fed in lockstep with the export loop; a backward jump (loop wrap) costs
+// one internal seek. If anything here is unavailable, the export silently
+// falls back to element seeking.
+let mediabunnyModule = null;
+function loadMediabunny() {
+  mediabunnyModule ??= import("./vendor/mediabunny-1.46.0.min.mjs").catch((e) => {
+    console.warn("mediabunny unavailable — export uses element seeking", e);
+    return null;
+  });
+  return mediabunnyModule;
+}
+
+class ExportVideoProvider {
+  static async create(mb, asset) {
+    const blob = asset.blob || (await fetch(asset.url).then((r) => r.blob()));
+    const input = new mb.Input({ source: new mb.BlobSource(blob), formats: mb.ALL_FORMATS });
+    const track = await input.getPrimaryVideoTrack();
+    if (!track || !(await track.canDecode())) return null;
+    const p = new ExportVideoProvider();
+    p.duration = await track.computeDuration();
+    p.sink = new mb.CanvasSink(track, { poolSize: 2 }); // handles rotation metadata too
+    p.iter = null; // sequential canvas iterator, created on first use
+    p.current = null; // WrappedCanvas { canvas, timestamp, duration } on screen now
+    p.chain = Promise.resolve();
+    return p;
+  }
+  // Resolve the decoded frame covering video time t (seconds). Walks the
+  // sequential decode iterator forward (each source frame decoded exactly
+  // once); a backward jump — loop wrap or a clip restarting — recreates the
+  // iterator, which costs one internal keyframe seek. Serialized: the sink's
+  // iterator is not reentrant.
+  frameAt(t) {
+    const run = this.chain.then(async () => {
+      t = Math.max(0, Math.min(t, this.duration - 0.001));
+      if (!this.iter || (this.current && t < this.current.timestamp - 0.001)) {
+        await this.iter?.return?.();
+        this.iter = this.sink.canvases(t)[Symbol.asyncIterator]();
+        this.current = null;
+      }
+      while (!this.current || this.current.timestamp + this.current.duration <= t) {
+        const { value, done } = await this.iter.next();
+        if (done) break; // past the last sample: hold the final frame
+        this.current = value;
+      }
+      return this.current?.canvas ?? null;
+    });
+    this.chain = run.then(() => {}, () => {});
+    return run;
+  }
+  async dispose() {
+    try {
+      await this.chain;
+      await this.iter?.return?.();
+    } catch {}
+  }
+}
+
+// One provider per video asset the export will touch: current device screens
+// plus every timeline screen clip (those swap onto devices mid-export).
+// Returns null when there's nothing to decode or WebCodecs can't handle it.
+async function setupExportVideoProviders(plan) {
+  const assets = new Set();
+  for (const x of plan.vids) if (x.asset) assets.add(x.asset);
+  for (const c of TL?.screenClips || []) if (c.asset?.type === "video") assets.add(c.asset);
+  if (!assets.size) return null;
+  const mb = await loadMediabunny();
+  if (!mb) return null;
+  const providers = new Map();
+  await Promise.all(
+    [...assets].map(async (asset) => {
+      try {
+        const p = await ExportVideoProvider.create(mb, asset);
+        if (p) providers.set(asset, p);
+      } catch (e) {
+        console.warn("WebCodecs decode unavailable for a screen video — using element seeking", e);
+      }
+    })
+  );
+  return providers.size ? { providers, requests: [] } : null;
+}
+
+// Offline export: step the scene frame by frame (no real-time recording), and
+// stream raw RGBA frames to the local server, which pipes them into ffmpeg's
+// hardware HEVC encoder with an alpha channel. Output: a transparent-background
+// QuickTime .mov. Runs as fast as render + encode allow, and every frame is
+// present, so motion is perfectly smooth.
+async function downloadVideoMov(cropNorm) {
+  const plan = exportClipPlan();
+  if (!plan.maxDur) return downloadStillPng();
+  tlPause();
+
+  const g = exportGeometry(cropNorm);
+  const frames = Math.max(1, Math.round(plan.maxDur * EXPORT_FPS));
+  const stamp = Date.now();
+  const tExportStart = performance.now();
+
+  const gl = renderer.getContext();
+  const dbgInfo = gl.getExtension("WEBGL_debug_renderer_info");
+  const tel = {
+    meta: {
+      when: new Date(stamp).toISOString(),
+      userAgent: navigator.userAgent,
+      hardwareConcurrency: navigator.hardwareConcurrency,
+      devicePixelRatio: window.devicePixelRatio,
+      gpu: dbgInfo ? gl.getParameter(dbgInfo.UNMASKED_RENDERER_WEBGL) : "unavailable",
+      maxTextureSize: renderer.capabilities.maxTextureSize,
+      jsHeapMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null,
+      visibilityAtStart: document.visibilityState,
+      out: { w: g.outW, h: g.outH },
+      full: { w: g.fullW, h: g.fullH },
+      fps: EXPORT_FPS,
+      frames,
+      clipSeconds: plan.maxDur,
+      animSeconds: plan.animDur,
+      timelineLoop: !!TL?.loop,
+      keyframes: TL?.keyframes?.length ?? 0,
+      animClips: TL?.clips?.length ?? 0,
+      screenClips: TL?.screenClips?.length ?? 0,
+      deviceCount: devices.length,
+      videos: plan.vids.map((x) => ({
+        w: x.v.videoWidth,
+        h: x.v.videoHeight,
+        duration: Math.round((x.v.duration || 0) * 100) / 100,
+        trim: x.asset?.trim ?? null,
+        clipOwned: x.dev._screenClipId != null,
+        mime: x.asset?.file?.type || null,
+      })),
+    },
+    // Per-frame phase costs in ms, comma-separated, one entry per frame:
+    // pose      — timeline interpolation + queueing NEXT frame's video frames (seek-ahead)
+    // seekWait  — residual wait for screen-video frames (WebCodecs decode or element seek)
+    // render    — WebGL scene render (+ unpremultiply/YUV-pack on the PBO path)
+    // readback  — PBO enqueue + fence waits + buffer map (or getImageData on fallback)
+    // uploadWait— time blocked waiting for a free upload lane (transport/encoder backpressure)
+    // postMs    — actual wall time of each frame's POST (in completion order)
+    // total     — whole iteration
+    phases: null,
+    // Seeks that were slow (>40ms), timed out, or landed off-target.
+    seekEvents: [],
+    seekTimeouts: 0,
+    seekOffTarget: 0, // landed >25ms of video time away from the request
+    uploadRetries: 0,
+    visibilityChanges: 0,
+    timings: {},
+    server: null,
+    result: "incomplete",
+  };
+  const ph = { pose: [], seekWait: [], render: [], readback: [], uploadWait: [], postMs: [], total: [] };
+  const onVis = () => tel.visibilityChanges++;
+  document.addEventListener("visibilitychange", onVis);
+
+  // WebGL2 gets the fast path: an async PBO ring instead of the synchronous
+  // 2D-canvas readback. HEVC additionally packs to planar YUVA420 on the GPU
+  // (2.5 B/px, flip + colour baked in) before readback; ProRes 4444 stays RGBA
+  // (4 B/px) — a native RGB+alpha format the server hands full chroma. WebGL1
+  // always reads back RGBA and lets the server convert.
+  const usePbo = !!renderer.capabilities.isWebGL2;
+  const codec = exportVideoFormat === "prores" ? "prores" : "hevc";
+  const usePack = usePbo && codec === "hevc";
+  const layout = usePack ? "yuva420" : "rgba";
+  const frameBytes = usePack ? (g.outW * g.outH * 5) / 2 : g.outW * g.outH * 4;
+  tel.meta.codec = codec;
+  tel.meta.layout = layout;
+  tel.meta.bytesPerFrame = frameBytes;
+  tel.meta.readbackMode = usePack ? "pbo-yuva420" : usePbo ? "pbo-rgba" : "canvas2d";
+
+  let t = performance.now();
+  const start = await fetch("/export/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      width: g.outW, height: g.outH, fps: EXPORT_FPS,
+      layout, codec, vflip: layout === "rgba" ? usePbo : false,
+    }),
+  }).then((r) => r.json()).catch(() => null);
+  tel.timings.startRequestMs = Math.round(performance.now() - t);
+  if (!start?.ok) {
+    document.removeEventListener("visibilitychange", onVis);
+    setStatus(`Export helper unavailable${start?.error ? ` (${start.error})` : ""} — saving WebM instead.`);
+    return downloadVideoWebM(cropNorm);
+  }
+
+  // WebCodecs decode pipelines for every screen video the export touches —
+  // frame-exact, no element seeking. Falls back per-asset when unavailable.
+  t = performance.now();
+  try {
+    exportVideoCtx = await setupExportVideoProviders(plan);
+  } catch (e) {
+    console.warn("video decode setup failed — using element seeking", e);
+    exportVideoCtx = null;
+  }
+  tel.timings.decoderInitMs = Math.round(performance.now() - t);
+  tel.meta.videoDecode = exportVideoCtx
+    ? `webcodecs (${exportVideoCtx.providers.size} provider${exportVideoCtx.providers.size === 1 ? "" : "s"})`
+    : plan.vids.length
+      ? "element-seek"
+      : "none";
+
+  exporting = true;
+  const restoreView = enterExportView(g);
+  // HEVC packs to YUVA420 on the GPU; everything else blits straight RGBA. Both
+  // leave the right framebuffer bound for the ring's readPixels.
+  const frameSource = usePack ? makeYuvaPacker(g) : usePbo ? makeExportBlit(g) : null;
+  const ring = usePbo
+    ? new ReadbackRing(gl, frameSource.readW, frameSource.readH, frameSource.frameBytes)
+    : null;
+  let gctx = null;
+  if (!usePbo) {
+    const grab = document.createElement("canvas");
+    grab.width = g.outW;
+    grab.height = g.outH;
+    gctx = grab.getContext("2d", { willReadFrequently: true });
+  }
+
+  let failed = null;
+  let rbMs = 0; // per-iteration readback time (enqueue + fence waits + map copy)
+  let upMs = 0; // per-iteration time blocked waiting for an upload lane
+  // Event-loop yield for fence polling. MessageChannel, NOT setTimeout: timers
+  // are throttled to ~1s in background tabs, which would turn every fence wait
+  // into a one-second stall. Message tasks aren't throttled.
+  const tickChannel = new MessageChannel();
+  let tickResolve = null;
+  tickChannel.port1.onmessage = () => { const r = tickResolve; tickResolve = null; if (r) r(); };
+  const tick = () => new Promise((r) => { tickResolve = r; tickChannel.port2.postMessage(0); });
+
+  // Frames upload as Blob bodies — the only body type Chromium moves at
+  // GB/s (typed arrays crawl at ~27MB/s through the renderer→network copy).
+  // Under sustained churn Chrome occasionally fails a fetch outright (blob
+  // storage pressure), so each attempt builds a FRESH Blob from a stable
+  // staging copy of the frame — a Blob that failed to materialize once stays
+  // broken forever. The server discards short bodies and acks duplicates, so
+  // retries can't corrupt the stream.
+  //
+  // Uploads are indexed and the server reorders them into ffmpeg, so frame
+  // ordering never depends on transport timing and a retried frame is
+  // dup-safe. LANES stays at 1: experiments with 2-3 concurrent ~40MB blob
+  // bodies reliably tipped Chromium's blob transport into failing fetches
+  // outright (and the damage persisted after backing off), so overlapping
+  // uploads trades a hard failure risk for ~20% speed — not worth it. The
+  // ffmpeg write overlaps the next upload server-side instead.
+  const LANES = 1;
+  let laneCount = LANES;
+  tel.meta.uploadLanes = LANES;
+  const lanes = Array.from({ length: LANES }, () => ({
+    staging: new Uint8Array(frameBytes),
+    inflight: null,
+  }));
+  let sendIndex = 0;
+  const postFrame = (lane, index, attempt = 0) => {
+    const t0 = performance.now();
+    return fetch("/export/frame", {
+      method: "POST",
+      headers: { "X-Frame-Index": String(index) },
+      body: new Blob([lane.staging]),
+    })
+      .then((r) => r.json())
+      .then((res) => {
+        if (res?.ok) ph.postMs.push(Math.round(performance.now() - t0));
+        return res;
+      })
+      .catch((e) => {
+        if (attempt < 6) {
+          tel.uploadRetries++;
+          laneCount = 1; // transport is straining — stop overlapping uploads
+          // Generous backoff: blob-storage pressure needs a beat (and a GC)
+          // to clear; a lost frame aborts the whole export, so patience wins.
+          return new Promise((r) => setTimeout(r, Math.min(3000, 250 * 2 ** attempt)))
+            .then(() => postFrame(lane, index, attempt + 1));
+        }
+        return { ok: false, error: `frame upload failed: ${e?.message || e}` };
+      });
+  };
+
+  // Stage a frame onto the next lane (waiting for that lane's previous POST
+  // to settle first) and fire its upload. Sets `failed` once a send breaks.
+  const sendFrame = async (view) => {
+    const lane = lanes[sendIndex % laneCount];
+    const t0 = performance.now();
+    if (lane.inflight) {
+      const prev = await lane.inflight;
+      upMs += performance.now() - t0;
+      if (!prev?.ok) {
+        failed = failed || prev?.error || "frame upload failed";
+        return false;
+      }
+    }
+    lane.staging.set(view);
+    lane.inflight = postFrame(lane, sendIndex++);
+    return true;
+  };
+
+  // Wait for every lane's last POST; surfaces any straggler failure.
+  const flushLanes = async () => {
+    for (const lane of lanes) {
+      const res = lane.inflight ? await lane.inflight : { ok: true };
+      if (!res?.ok) failed = failed || res?.error || "frame upload failed";
+    }
+  };
+
+  // Ship finished reads out of the ring in frame order. block=true waits for
+  // the oldest read to land and frees exactly one slot.
+  const drainRing = async (block) => {
+    while (ring.pending.length && !failed) {
+      if (!ring.oldestReady()) {
+        if (!block) return;
+        const t0 = performance.now();
+        while (!ring.oldestReady()) await tick();
+        rbMs += performance.now() - t0;
+      }
+      const t0 = performance.now();
+      const out = ring.take();
+      rbMs += performance.now() - t0;
+      await sendFrame(out.bytes);
+      if (block) return;
+    }
+  };
+
+  // Resolve this frame's screen-video content: decoded WebCodecs frames go
+  // straight into the screen textures; any provider-less video falls back to
+  // element seeks (awaitScreenSeeks). Returns wait details for telemetry.
+  const settleVideoFrames = async () => {
+    const evs = [];
+    const reqs = exportVideoCtx ? exportVideoCtx.requests.splice(0) : [];
+    await Promise.all([
+      ...reqs.map(async (r) => {
+        const t0 = performance.now();
+        const cnv = await exportVideoCtx.providers.get(r.asset).frameAt(r.t).then((c) => c, () => null);
+        if (cnv && r.dev.uploadedTexture) {
+          r.dev.uploadedTexture.image = cnv;
+          r.dev.uploadedTexture.needsUpdate = true;
+        }
+        evs.push({ vid: 0, ms: performance.now() - t0, timedOut: false, wc: true });
+      }),
+      awaitScreenSeeks().then((s) => {
+        evs.push(...s);
+      }),
+    ]);
+    return evs;
+  };
+
+  const tLoopStart = performance.now();
+  try {
+    // Pose frame 0 and let its screen-video frames land before the first render.
+    let requestedSeeks = exportPoseAt(0, plan);
+    await settleVideoFrames();
+    for (let i = 0; i < frames && !failed; i++) {
+      const tFrame = performance.now();
+      rbMs = 0;
+      upMs = 0;
+
+      // VideoTexture only refreshes on the browser's frame callback, which our
+      // tight loop outruns — force the upload so the texture can't be stale.
+      for (const d of devices) {
+        if (d.screenIsVideo && d.uploadedTexture) d.uploadedTexture.needsUpdate = true;
+      }
+      let t0 = performance.now();
+      if (frameSource) frameSource.render();
+      else renderFrame();
+      ph.render.push(performance.now() - t0);
+
+      if (usePbo) {
+        if (!ring.hasFree()) await drainRing(true); // wait out the oldest read
+        if (failed) break;
+        t0 = performance.now();
+        ring.enqueue(i);
+        rbMs += performance.now() - t0;
+      } else {
+        t0 = performance.now();
+        gctx.clearRect(0, 0, g.outW, g.outH);
+        gctx.drawImage(canvas, 0, 0);
+        const pixels = gctx.getImageData(0, 0, g.outW, g.outH);
+        rbMs += performance.now() - t0;
+        if (!(await sendFrame(pixels.data))) break;
+      }
+
+      // Seek-ahead: kick frame i+1's pose and screen-video seeks NOW, while
+      // the GPU is still copying frame i out — the seek latency hides behind
+      // the readback and upload instead of stalling the loop.
+      t0 = performance.now();
+      requestedSeeks = i + 1 < frames ? exportPoseAt((i + 1) / EXPORT_FPS, plan) : [];
+      ph.pose.push(performance.now() - t0);
+
+      if (usePbo) await drainRing(false); // ship whatever finished meanwhile
+
+      t0 = performance.now();
+      const seeks = await settleVideoFrames();
+      ph.seekWait.push(performance.now() - t0);
+      for (const s of seeks) {
+        if (s.timedOut) tel.seekTimeouts++;
+        if (s.timedOut || s.ms > 40) {
+          if (tel.seekEvents.length < 300) tel.seekEvents.push({ f: i + 1, vid: s.vid, ms: Math.round(s.ms), timedOut: s.timedOut, wc: !!s.wc });
+        }
+      }
+      for (const r of requestedSeeks) {
+        if (Math.abs(r.v.currentTime - r.wantT) > 0.025) tel.seekOffTarget++;
+      }
+
+      ph.readback.push(rbMs);
+      ph.uploadWait.push(upMs);
+      ph.total.push(performance.now() - tFrame);
+      if (i % 5 === 0 || i === frames - 1) {
+        setStatus(`Rendering video… ${Math.round(((i + 1) / frames) * 100)}%`);
+      }
+    }
+    // Flush the remaining reads and every lane's last upload.
+    if (usePbo) {
+      rbMs = 0;
+      upMs = 0;
+      while (ring.pending.length && !failed) await drainRing(true);
+    }
+    await flushLanes();
+  } finally {
+    ring?.dispose();
+    frameSource?.dispose();
+    renderer.setRenderTarget(null); // leave three.js bound to the default canvas
+    restoreView();
+    exporting = false;
+    document.removeEventListener("visibilitychange", onVis);
+    if (exportVideoCtx) {
+      for (const p of exportVideoCtx.providers.values()) p.dispose();
+      exportVideoCtx = null;
+    }
+    // The export pointed screen textures at decoder canvases — hand them back
+    // to their live <video> elements for the interactive preview.
+    for (const d of devices) {
+      if (d.screenIsVideo && d.screenVideo && d.uploadedTexture) {
+        d.uploadedTexture.image = d.screenVideo;
+        d.uploadedTexture.needsUpdate = true;
+      }
+    }
+    // Put the scene back at the on-screen playhead pose and resume previews.
+    if (plan.animDur) tlApplyU(THREE.MathUtils.clamp(TL.time / TL.duration, 0, 1));
+    for (const x of plan.vids) {
+      if (x.dev._screenClipId == null) x.v.play().catch(() => {});
+    }
+  }
+  tel.timings.loopMs = Math.round(performance.now() - tLoopStart);
+  tel.meta.uploadLanesFinal = laneCount; // 1 here = transport strained, overlap was disabled
+
+  // Assemble the telemetry summary (computed whether the export succeeded or not).
+  const done = ph.total.length;
+  tel.summary = {
+    framesCompleted: done,
+    renderFps: done ? Math.round((done / (tel.timings.loopMs / 1000)) * 10) / 10 : 0,
+    perPhase: Object.fromEntries(Object.entries(ph).map(([k, a]) => [k, telStats(a)])),
+    slowestFrames: ph.total
+      .map((ms, f) => ({ f, ms: Math.round(ms) }))
+      .sort((a, b) => b.ms - a.ms)
+      .slice(0, 10)
+      .map(({ f, ms }) => ({
+        f,
+        ms,
+        pose: Math.round(ph.pose[f]),
+        seekWait: Math.round(ph.seekWait[f]),
+        render: Math.round(ph.render[f]),
+        readback: Math.round(ph.readback[f]),
+        uploadWait: Math.round(ph.uploadWait[f]),
+      })),
+  };
+  tel.phases = Object.fromEntries(
+    Object.entries(ph).map(([k, a]) => [k, a.map((x) => Math.round(x * 10) / 10).join(",")])
+  );
+  if (performance.memory) tel.meta.jsHeapEndMB = Math.round(performance.memory.usedJSHeapSize / 1048576);
+
+  if (failed) {
+    tel.result = `failed: ${failed}`;
+    tel.server = await fetch("/export/stats").then((r) => r.json()).catch(() => null);
+    fetch("/export/abort", { method: "POST" }).catch(() => {});
+    saveExportTelemetry(tel, stamp);
+    setStatus(`Video export failed: ${failed} (telemetry saved)`);
+    return;
+  }
+
+  setStatus("Encoding video…");
+  t = performance.now();
+  const res = await fetch("/export/finish", { method: "POST" });
+  tel.timings.finishMs = Math.round(performance.now() - t);
+  if (!res.ok) {
+    let msg = "encoding failed";
+    try { msg = (await res.json()).error || msg; } catch {}
+    tel.result = `failed: ${msg}`;
+    tel.server = await fetch("/export/stats").then((r) => r.json()).catch(() => null);
+    saveExportTelemetry(tel, stamp);
+    setStatus(`Video export failed: ${msg} (telemetry saved)`);
+    return;
+  }
+  const blob = await res.blob();
+  tel.timings.totalMs = Math.round(performance.now() - tExportStart);
+  tel.result = "ok";
+  tel.movBytes = blob.size;
+  tel.server = await fetch("/export/stats").then((r) => r.json()).catch(() => null);
+  console.debug(`[export] ${tel.summary.framesCompleted} frames ${g.outW}×${g.outH} — ${tel.summary.renderFps} fps render`, tel.summary.perPhase);
+
+  const codecTag = codec === "prores" ? "prores4444" : "hevc";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `iphone-mockup-${stamp}-${codecTag}.mov`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  saveExportTelemetry(tel, stamp);
+  saveModal.hidden = true;
+  const label = codec === "prores" ? "ProRes 4444" : "HEVC + alpha";
+  setStatus(`Saved video (${label} .mov ${g.outW}×${g.outH}, transparent background) + telemetry JSON.`);
+}
+
+// Fallback when the export helper (server.py + ffmpeg) isn't available:
+// record the canvas in real time with MediaRecorder into a transparent WebM.
+// Capped by wall-clock speed and the realtime encoder, so the .mov path above
+// is preferred.
+async function downloadVideoWebM(cropNorm) {
+  const mime = pickVideoMime();
+  if (!mime) {
+    setStatus("Video export isn't supported in this browser.");
+    return;
+  }
+  const plan = exportClipPlan();
+  if (!plan.maxDur) return downloadStillPng();
+  tlPause();
+
+  const g = exportGeometry(cropNorm);
+  const out = document.createElement("canvas");
+  out.width = g.outW;
+  out.height = g.outH;
+  const octx = out.getContext("2d");
+
+  // Bitrate scales with resolution (~0.2 bits/px/frame), capped at 60 Mbps so
+  // a 4K clip stays high-quality without ballooning the file.
+  const bitrate = Math.min(60_000_000, Math.round(g.outW * g.outH * EXPORT_FPS * 0.2));
+  const stream = out.captureStream(EXPORT_FPS);
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrate });
+  const chunks = [];
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+
+  exporting = true;
+  const restoreView = enterExportView(g);
 
   // Restart every clip at its trim start so they're in sync.
-  for (const x of vids) {
+  for (const x of plan.vids) {
     x.v.currentTime = x.asset?.trim?.start ?? 0;
     try { await x.v.play(); } catch {}
   }
 
-  setStatus("Recording video…");
+  setStatus("Recording video (WebM)…");
   rec.start();
   const startT = performance.now();
 
@@ -2210,17 +3290,16 @@ async function downloadVideo(cropNorm) {
     function frame() {
       const elapsed = (performance.now() - startT) / 1000;
       // Drive the animation timeline: loop cycles, otherwise hold the last pose.
-      if (animDur) {
+      if (plan.animDur) {
         const u = TL.loop && elapsed > TL.duration
           ? (elapsed % TL.duration) / TL.duration
           : Math.min(1, elapsed / TL.duration);
         tlApplyU(u);
       }
       renderFrame();
-      octx.clearRect(0, 0, outW, outH);
-      // The background plane is in the render, so just blit the crop region.
-      octx.drawImage(canvas, sx, sy, outW, outH, 0, 0, outW, outH);
-      if (elapsed >= maxDur) return resolve();
+      octx.clearRect(0, 0, g.outW, g.outH);
+      octx.drawImage(canvas, 0, 0);
+      if (elapsed >= plan.maxDur) return resolve();
       schedule();
     }
     // rAF starves when the tab is hidden, so race it against a timer — the
@@ -2242,15 +3321,10 @@ async function downloadVideo(cropNorm) {
   rec.stop();
   await new Promise((r) => (rec.onstop = r));
 
-  // Restore the interactive renderer state.
-  transform.visible = gizmoWasVisible;
-  renderer.setPixelRatio(prevRatio);
-  camera.aspect = prevAspect;
-  camera.updateProjectionMatrix();
+  restoreView();
   exporting = false;
-  onResize();
   // Put the scene back at the on-screen playhead pose.
-  if (animDur) tlApplyU(THREE.MathUtils.clamp(TL.time / TL.duration, 0, 1));
+  if (plan.animDur) tlApplyU(THREE.MathUtils.clamp(TL.time / TL.duration, 0, 1));
 
   const blob = new Blob(chunks, { type: mime });
   const a = document.createElement("a");
@@ -2262,7 +3336,24 @@ async function downloadVideo(cropNorm) {
   setStatus("Saved video (WebM, transparent background).");
 }
 
+// Prefer the .mov pipeline when the local export helper is up; remember the
+// answer for the session.
+let serverExportOk = null;
+async function downloadVideo(cropNorm) {
+  if (serverExportOk == null) {
+    serverExportOk = await fetch("/export/ping")
+      .then((r) => r.json())
+      .then((j) => !!(j.ok && j.ffmpeg))
+      .catch(() => false);
+  }
+  return serverExportOk ? downloadVideoMov(cropNorm) : downloadVideoWebM(cropNorm);
+}
+
 $("cropDownload").addEventListener("click", () => {
+  // Hand the scene back before exporting — the export drives the timeline itself
+  // and must not race the preview loop. cropRectNormalized() is read after stop(),
+  // but the crop box and image layout are untouched, so the rect is unchanged.
+  cropPreview.stop();
   if (isVideoMockup() || animActive()) downloadVideo(cropRectNormalized());
   else downloadStillPng();
 });
@@ -2290,6 +3381,12 @@ function renderFrame() {
 
 // True while downloadVideo() owns the renderer, so the on-demand loop stands down.
 let exporting = false;
+
+// Active WebCodecs decode pipelines for the running export (or null):
+// { providers: Map<asset, ExportVideoProvider>, requests: [{dev, asset, t}] }.
+// While set, the export pose code queues frame requests here instead of
+// seeking <video> elements.
+let exportVideoCtx = null;
 
 // A playing device clip means the scene is animating, so keep drawing every frame
 // (VideoTexture refreshes itself via requestVideoFrameCallback).
@@ -2517,6 +3614,7 @@ async function buildProjectState(folder) {
     screenClips.push({
       dev: c.dev, start: c.start, dur: c.dur,
       playIn: c.playIn ?? 0, playOut: c.playOut ?? null, loop: !!c.loop,
+      trim: c.trim ?? null,
       mediaKey: k,
     });
   }
@@ -2546,6 +3644,7 @@ async function buildProjectState(folder) {
   const settings = {
     v: 2,
     drama, // scene-wide lighting contrast
+    exposure: renderer.toneMappingExposure, // scene-wide tone-map exposure (#3)
     camera: { pos: camera.position.toArray(), target: controls.target.toArray() },
     media: manifest,
     devices: devs,
@@ -2580,6 +3679,8 @@ async function loadMediaManifest(media) {
 async function applySceneState(state, imagePaths) {
   if (!state) return;
   setDrama(state.drama ?? DEFAULT_DRAMA); // restore lighting (default for old saves)
+  renderer.toneMappingExposure = state.exposure ?? DEFAULT_EXPOSURE; // restore exposure (default for old saves)
+  render();
 
   // Tear down the current scene. Clear image layers + background first (removing
   // them can re-select the active device), then the devices themselves.
@@ -3303,12 +4404,17 @@ function tlApplyScreens(t) {
     // holds whatever frame it reached after playOut — so you get a frozen poster
     // until the video kicks in, and a frozen frame wherever it stops. Loop mode
     // ignores the range and repeats across the whole clip.
-    if (clip && clip.asset.type === "video" && dev.screenVideo && dev.screenVideo.readyState >= 1) {
+    const provider = exporting && clip && clip.asset.type === "video"
+      ? exportVideoCtx?.providers.get(clip.asset) ?? null
+      : null;
+    if (clip && clip.asset.type === "video" && dev.screenVideo && (dev.screenVideo.readyState >= 1 || provider)) {
       const v = dev.screenVideo;
       v.loop = !!clip.loop;
-      const tr = clip.asset.trim;
+      const tr = clip.trim ?? clip.asset.trim; // clip-level trim wins over the asset's
+      // A clip element that just appeared mid-export has no metadata yet; the
+      // provider knows the real duration, so the export needn't wait for it.
+      const end = tr?.end ?? (v.readyState >= 1 ? v.duration : provider?.duration) ?? Infinity;
       const s0 = tr?.start ?? 0;
-      const end = tr?.end ?? v.duration ?? Infinity;
       const span = Math.max(0.01, end - s0);
       const local = Math.max(0, t - clip.start);
       let wantT, rolling;
@@ -3322,7 +4428,12 @@ function tlApplyScreens(t) {
         wantT = s0 + rolled;
         rolling = local > pIn && local < pOut && rolled < span - 0.001;
       }
-      if (!rolling || (!TL.playing && !exporting)) {
+      if (provider) {
+        // WebCodecs export path: queue the exact frame from the sequential
+        // decoder instead of seeking the element.
+        exportVideoCtx.requests.push({ dev, asset: clip.asset, t: wantT });
+        if (!v.paused) v.pause();
+      } else if (!rolling || (!TL.playing && !exporting)) {
         // Held frame, or paused scrubbing: seek exactly, keep paused.
         if (Math.abs(v.currentTime - wantT) > 0.04) v.currentTime = wantT;
         if (!v.paused) v.pause();
@@ -3419,16 +4530,18 @@ function tlRefresh() {
   tlRenderLane();
 }
 
-// The per-clip loop toggle appears only for a selected screen *video* clip.
+// Clip tools appear for any selected clip (Edit works on all of them); the
+// loop toggle and play-range controls only for a screen *video* clip.
 function tlSyncClipTools() {
   const vClip = TL.selClip && TL.screenClips.includes(TL.selClip) && TL.selClip.asset.type === "video"
     ? TL.selClip : null;
-  $("tlClipTools").hidden = !vClip;
+  $("tlClipTools").hidden = !TL.selClip;
+  $("tlClipLoop").hidden = !vClip;
+  // Play-range controls only make sense for play-once (not loop).
+  $("tlPlayRange").hidden = !vClip || !!vClip.loop;
   if (vClip) {
     $("tlClipLoop").classList.toggle("active", !!vClip.loop);
     $("tlClipLoopLabel").textContent = vClip.loop ? "Loops" : "Plays once";
-    // Play-range controls only make sense for play-once (not loop).
-    $("tlPlayRange").hidden = !!vClip.loop;
   }
 }
 
@@ -3532,14 +4645,31 @@ function tlRenderRuler() {
   }
 }
 
-function tlSetZoom(z) {
+// Zoom the timeline. By default it re-centers on the playhead; pass an anchor
+// fraction (0–1 across the visible viewport) to keep the content under the
+// cursor fixed instead — that's what scroll-to-zoom uses.
+function tlSetZoom(z, anchorFrac = null) {
+  // The timeline content offset under the anchor, before the zoom changes, so we
+  // can restore it afterward and keep that point pinned under the cursor.
+  let anchorTime = null;
+  if (anchorFrac != null) {
+    const beforeWidth = tlContentEl.clientWidth || tlScrollEl.clientWidth;
+    const anchorPx = tlScrollEl.scrollLeft + anchorFrac * tlScrollEl.clientWidth;
+    anchorTime = (anchorPx / beforeWidth) * TL.duration;
+  }
   TL.zoom = THREE.MathUtils.clamp(z, 1, 8);
   $("tlZoomLabel").textContent = `${Math.round(TL.zoom * 10) / 10}×`;
   tlContentEl.style.width = (TL.zoom * 100) + "%";
   tlRenderRuler();
-  // Re-center the view on the playhead ("look closely at where my scrubber is").
-  const px = (TL.time / TL.duration) * tlContentEl.clientWidth;
-  tlScrollEl.scrollLeft = px - tlScrollEl.clientWidth / 2;
+  if (anchorTime != null) {
+    // Re-pin the anchored time under the cursor.
+    const px = (anchorTime / TL.duration) * tlContentEl.clientWidth;
+    tlScrollEl.scrollLeft = px - anchorFrac * tlScrollEl.clientWidth;
+  } else {
+    // Re-center the view on the playhead ("look closely at where my scrubber is").
+    const px = (TL.time / TL.duration) * tlContentEl.clientWidth;
+    tlScrollEl.scrollLeft = px - tlScrollEl.clientWidth / 2;
+  }
 }
 
 $("tlZoomIn").addEventListener("click", () => tlSetZoom(TL.zoom * 1.5));
@@ -3605,9 +4735,13 @@ $("tlResetPlay").addEventListener("click", () => {
   setStatus("Play range reset — the video plays through once.");
 });
 tlScrollEl.addEventListener("wheel", (e) => {
-  if (!e.ctrlKey && !e.metaKey) return;
+  // Horizontal scroll (trackpad / shift+wheel) pans the timeline as usual.
+  if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+  // Vertical scroll zooms, anchored on the cursor's position in the viewport.
   e.preventDefault();
-  tlSetZoom(TL.zoom * (e.deltaY < 0 ? 1.2 : 1 / 1.2));
+  const rect = tlScrollEl.getBoundingClientRect();
+  const anchorFrac = THREE.MathUtils.clamp((e.clientX - rect.left) / rect.width, 0, 1);
+  tlSetZoom(TL.zoom * (e.deltaY < 0 ? 1.2 : 1 / 1.2), anchorFrac);
 }, { passive: false });
 
 // =====================================================================
@@ -3859,9 +4993,15 @@ tlLaneEl.addEventListener("pointerdown", (e) => {
     const list = TL.lane === "anim" ? TL.clips : TL.screenClips;
     const c = list.find((x) => x.id === +clipEl.dataset.id);
     if (!c) return;
-    const mode = e.target.classList.contains("h") ? (e.target.classList.contains("l") ? "l" : "r") : "move";
-    _laneDrag = { c, list, mode, t0: tlPointerT(e), start0: c.start, dur0: c.dur, moved: false };
     tlSelectClip(c);
+    if (e.target.closest(".x")) return; // the remove button is click-only, never a drag
+    // Decide the drag mode from where the pointer landed, not which child element
+    // it hit: anywhere in an edge zone resizes, only the middle moves. Zones are
+    // generous (14px) but capped at 30% a side so narrow clips keep a movable middle.
+    const r = clipEl.getBoundingClientRect();
+    const edge = Math.min(14, r.width * 0.3);
+    const mode = e.clientX - r.left <= edge ? "l" : r.right - e.clientX <= edge ? "r" : "move";
+    _laneDrag = { c, list, mode, t0: tlPointerT(e), start0: c.start, dur0: c.dur, moved: false };
   } else {
     _laneDrag = null;
     _laneScrub = true;
@@ -3950,6 +5090,174 @@ for (const p of CLIP_PRESETS) {
   });
   tlPresetsMenu.appendChild(b);
 }
+
+// =====================================================================
+// Clip edit modal — trim + timing for the selected timeline clip.
+// Trim is stored per clip (clip.trim), so two clips can use different
+// slices of the same video; it falls back to the asset's library trim.
+// =====================================================================
+const clipEditModal = $("clipEditModal");
+const ceVideo = $("clipEditVideo");
+const ceTrack = $("clipEditTrack");
+let ceClip = null;     // the timeline clip being edited
+let ceIsVideo = false;
+let ceDur = 0;         // source video duration (s)
+let ceStart = 0;       // working trim-in (source s)
+let ceEnd = 0;         // working trim-out (source s)
+let ceResolving = false;
+
+function ceFmt(t) {
+  if (!isFinite(t)) t = 0;
+  const m = Math.floor(t / 60);
+  const s = t - m * 60;
+  return `${m}:${s < 10 ? "0" : ""}${s.toFixed(2)}`;
+}
+
+function ceUpdateUI() {
+  const pct = (t) => (ceDur > 0 ? (t / ceDur) * 100 : 0);
+  $("clipEditStartHandle").style.left = pct(ceStart) + "%";
+  $("clipEditEndHandle").style.left = pct(ceEnd) + "%";
+  $("clipEditRange").style.left = pct(ceStart) + "%";
+  $("clipEditRange").style.width = pct(ceEnd - ceStart) + "%";
+  $("clipEditStartLabel").textContent = ceFmt(ceStart);
+  $("clipEditEndLabel").textContent = ceFmt(ceEnd);
+}
+
+function openClipEditor(clip) {
+  if (!clip) return;
+  tlPause();
+  ceClip = clip;
+  ceIsVideo = !!clip.asset && clip.asset.type === "video";
+  const name = clip.asset ? (clip.asset.name || "media") : (clipPreset(clip.preset)?.name || "animation");
+  $("clipEditTitle").textContent = `Edit clip — ${name}`;
+  $("clipEditSub").textContent = ceIsVideo
+    ? "Drag the handles to trim which part of the video plays."
+    : "Set when the clip starts and how long it runs.";
+  $("clipEditStart").value = clip.start.toFixed(2);
+  $("clipEditDur").value = clip.dur.toFixed(2);
+  $("clipEditStage").hidden = !ceIsVideo;
+  $("clipEditTrimWrap").hidden = !ceIsVideo;
+  clipEditModal.hidden = false;
+  if (!ceIsVideo) return;
+
+  ceVideo.src = clip.asset.url;
+  const finishOpen = () => {
+    const tr = clip.trim ?? clip.asset.trim;
+    ceStart = tr?.start ?? 0;
+    ceEnd = tr?.end ?? ceDur;
+    ceUpdateUI();
+    ceVideo.currentTime = ceStart;
+    ceVideo.play().catch(() => {});
+  };
+  ceVideo.onloadedmetadata = () => {
+    ceDur = ceVideo.duration;
+    if (!isFinite(ceDur) || ceDur === 0) {
+      // MediaRecorder WebM reports Infinity until seeked past the end once.
+      ceResolving = true;
+      const fix = () => {
+        ceVideo.removeEventListener("timeupdate", fix);
+        ceDur = isFinite(ceVideo.duration) ? ceVideo.duration : (ceVideo.currentTime || 0);
+        ceResolving = false;
+        ceVideo.currentTime = 0;
+        finishOpen();
+      };
+      ceVideo.addEventListener("timeupdate", fix);
+      ceVideo.currentTime = 1e7;
+      return;
+    }
+    finishOpen();
+  };
+}
+
+function closeClipEditor() {
+  clipEditModal.hidden = true;
+  try { ceVideo.pause(); } catch {}
+  ceVideo.removeAttribute("src");
+  ceVideo.load();
+  ceClip = null;
+}
+
+// Preview loops inside the trim range so you see exactly what will play.
+ceVideo.addEventListener("timeupdate", () => {
+  if (clipEditModal.hidden || ceResolving) return;
+  if (ceVideo.currentTime >= ceEnd || ceVideo.currentTime < ceStart - 0.05) {
+    ceVideo.currentTime = ceStart;
+    ceVideo.play().catch(() => {}); // keep looping even after a natural "ended" pause
+  }
+  $("clipEditPlayhead").style.left = (ceDur > 0 ? (ceVideo.currentTime / ceDur) * 100 : 0) + "%";
+});
+
+let ceDrag = null;
+function cePointerMove(e) {
+  if (!ceDrag) return;
+  const rect = ceTrack.getBoundingClientRect();
+  const t = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)) * ceDur;
+  if (ceDrag === "start") {
+    ceStart = Math.max(0, Math.min(t, ceEnd - 0.1));
+    ceVideo.currentTime = ceStart;
+  } else {
+    ceEnd = Math.min(ceDur, Math.max(t, ceStart + 0.1));
+  }
+  ceUpdateUI();
+}
+function cePointerUp() {
+  ceDrag = null;
+  window.removeEventListener("pointermove", cePointerMove);
+  window.removeEventListener("pointerup", cePointerUp);
+}
+[$("clipEditStartHandle"), $("clipEditEndHandle")].forEach((h) => {
+  h.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    ceDrag = h.dataset.h;
+    window.addEventListener("pointermove", cePointerMove);
+    window.addEventListener("pointerup", cePointerUp);
+  });
+});
+
+$("clipEditApply").addEventListener("click", () => {
+  if (!ceClip) return;
+  const c = ceClip;
+  const start = Math.max(0, parseFloat($("clipEditStart").value) || 0);
+  let dur = Math.max(0.2, parseFloat($("clipEditDur").value) || c.dur);
+  if (ceIsVideo && ceDur > 0) {
+    const oldTr = c.trim ?? c.asset.trim;
+    const oldSpan = (oldTr?.end ?? ceDur) - (oldTr?.start ?? 0);
+    const isFull = ceStart <= 0.01 && ceEnd >= ceDur - 0.01;
+    c.trim = isFull ? null : { start: ceStart, end: ceEnd };
+    // If the clip simply ran the whole (old) trim and no new duration was typed,
+    // follow the new trim length on the timeline.
+    const durUntouched = Math.abs(dur - c.dur) < 0.005;
+    if (durUntouched && Math.abs(c.dur - oldSpan) < 0.05) dur = Math.max(0.2, ceEnd - ceStart);
+  }
+  c.start = Math.round(start * 100) / 100;
+  c.dur = Math.round(dur * 100) / 100;
+  if (c.asset?.type === "video") {
+    c.playIn = THREE.MathUtils.clamp(c.playIn || 0, 0, c.dur);
+    if (c.playOut != null) c.playOut = THREE.MathUtils.clamp(c.playOut, c.playIn, c.dur);
+  }
+  closeClipEditor();
+  tlFitDuration();
+  tlRefresh();
+  tlApplyU(TL.time / TL.duration);
+  setStatus(`Clip updated: ${c.start.toFixed(2)}s → ${(c.start + c.dur).toFixed(2)}s.`);
+});
+
+$("clipEditDelete").addEventListener("click", () => {
+  const c = ceClip;
+  closeClipEditor();
+  if (c) tlRemoveClip(c);
+});
+$("clipEditCancel").addEventListener("click", closeClipEditor);
+
+$("tlClipEdit").addEventListener("click", () => openClipEditor(TL.selClip));
+// Double-clicking a clip is a shortcut for Edit.
+tlLaneEl.addEventListener("dblclick", (e) => {
+  const clipEl = e.target.closest(".tl-clip");
+  if (!clipEl || e.target.closest(".x")) return;
+  const list = TL.lane === "anim" ? TL.clips : TL.screenClips;
+  const c = list.find((x) => x.id === +clipEl.dataset.id);
+  if (c) openClipEditor(c);
+});
 
 // =====================================================================
 // Track & ruler scrubbing, keyframe dragging
@@ -4112,7 +5420,7 @@ function tlRestore(a) {
         id: ++_tlClipSeq, dev: c.dev | 0, asset: c.asset,
         start: +c.start || 0, dur: Math.max(0.2, +c.dur || 1),
         playIn: +c.playIn || 0, playOut: c.playOut == null ? null : +c.playOut,
-        loop: !!c.loop,
+        loop: !!c.loop, trim: c.trim || null,
       }));
     TL.rest = a.rest ? tlClone(a.rest) : null;
     tlSort();

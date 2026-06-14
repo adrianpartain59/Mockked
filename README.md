@@ -83,8 +83,12 @@ A local server is required (the browser can't load the `.glb`/`.exr` over `file:
 - **Export** — the top-bar button renders the scene and opens a **crop modal**:
   drag/resize the crop box, then download the cropped region. Stills export as
   transparent PNG; when the timeline has keyframes (or a screen plays a video
-  clip) the button becomes **Export Video** and records a transparent ~4K WebM
-  of the animation — ready for ads.
+  clip) the button becomes **Export Video** and renders the animation frame by
+  frame into a transparent ~4K **HEVC `.mov`** (hardware-encoded by ffmpeg via
+  `server.py` — install with `brew install ffmpeg`). The alpha channel
+  survives into Final Cut / Premiere / After Effects / Keynote. If ffmpeg or
+  the helper server isn't available, export falls back to a real-time
+  transparent WebM recording.
 - **Accounts & cloud sync** — sign up / sign in (email + password), then save
   mockups to the cloud and reload them later. Each saved mockup stores its
   settings (colour, transform, fit, brightness) plus the screen image. **Save**
@@ -113,5 +117,9 @@ One-time setup in your Supabase project:
 - `index.html` — markup & control panel
 - `styles.css` — UI styling
 - `app.js` — Three.js scene, model/material handling, export, auth & cloud sync
+- `server.py` — local static server + ffmpeg export pipe (transparent `.mov`)
+- `vendor/mediabunny-*.min.mjs` — vendored [Mediabunny](https://mediabunny.dev) (MPL-2.0);
+  demuxes screen videos so exports decode them frame-exactly via WebCodecs
+  instead of seeking a `<video>` element
 - `supabase.js` — Supabase client (public URL + anon key)
 - `supabase/schema.sql` — database table, RLS policies, and storage bucket
